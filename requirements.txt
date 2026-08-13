@@ -10,3 +10,4 @@ pypdf
 dnspython
 python-dotenv
 lxml
+curl_cffi
