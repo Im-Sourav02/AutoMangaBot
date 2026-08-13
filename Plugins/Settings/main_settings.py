@@ -181,7 +181,8 @@ async def set_source_menu(client, callback_query):
                 InlineKeyboardButton(f"{'✅ ' if current == 'mangakakalot' else ''}Mangakakalot", callback_data="set_source_mangakakalot")
             ],
             [
-                InlineKeyboardButton(f"{'✅ ' if current == 'allmanga' else ''}AllManga", callback_data="set_source_allmanga")
+                InlineKeyboardButton(f"{'✅ ' if current == 'allmanga' else ''}AllManga", callback_data="set_source_allmanga"),
+                InlineKeyboardButton(f"{'✅ ' if current == 'atsumaru' else ''}Atsumaru", callback_data="set_source_atsumaru")
             ],
             [
                 InlineKeyboardButton("⬅ back", callback_data="settings_menu")

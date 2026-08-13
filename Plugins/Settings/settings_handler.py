@@ -24,7 +24,15 @@ async def cancel_input_cb(client, callback_query):
     await callback_query.message.reply_text("cancelled.", reply_markup=InlineKeyboardMarkup(buttons))
 
 
-@Client.on_message(filters.private & ~filters.command(["start", "help", "admin"]))
+def check_settings_state(_, __, m):
+    if not m.from_user: return False
+    uid = m.from_user.id
+    if uid not in user_states: return False
+    return isinstance(user_states[uid], dict) and "state" in user_states[uid]
+
+settings_filter = filters.create(check_settings_state)
+
+@Client.on_message(filters.private & settings_filter & ~filters.command(["start", "help", "admin"]))
 async def settings_input_listener(client, message):
     user_id = message.from_user.id
     if user_id not in user_states:

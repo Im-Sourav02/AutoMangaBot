@@ -12,6 +12,11 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from PIL import Image, ImageDraw, ImageFont, ImageColor
+import io
+try:
+    import pillow_avif  # Registers AVIF support with Pillow
+except ImportError:
+    pass
 import zipfile
 import zipfile
 import re
@@ -46,14 +51,28 @@ class Downloader:
                         continue
                     response.raise_for_status()
 
-                    size = 0
-                    async with aiofiles.open(output_path, 'wb') as f:
-                        async for chunk in response.content.iter_chunked(8192):
-                            size += len(chunk)
-                            if size > self.Config.MAX_IMAGE_SIZE:
-                                logger.error(f"Image too large: {size} bytes")
-                                return False
-                            await f.write(chunk)
+                    data = b""
+                    async for chunk in response.content.iter_chunked(8192):
+                        data += chunk
+                        if len(data) > self.Config.MAX_IMAGE_SIZE:
+                            logger.error(f"Image too large: {len(data)} bytes")
+                            return False
+
+                    # Convert any format (WebP, PNG, AVIF, etc.) to a real JPEG
+                    try:
+                        img = Image.open(io.BytesIO(data))
+                        img.load()
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        # Always save as JPEG so Pillow can read it back later
+                        output_path = output_path.with_suffix('.jpg')
+                        img.save(output_path, 'JPEG', quality=95)
+                        img.close()
+                    except Exception as conv_err:
+                        logger.warning(f"Could not decode image from {url}, saving raw: {conv_err}")
+                        async with aiofiles.open(output_path, 'wb') as f:
+                            await f.write(data)
+
                     return True
             except Exception as e:
                 logger.error(f"Download failed (attempt {attempt + 1}): {e}")
@@ -289,21 +308,26 @@ class Downloader:
             q = quality if quality is not None else 85
             
             for i, img_path in enumerate(final_images):
-                img = Image.open(img_path)
-                if img.width > 2000 or img.height > 2000:
-                    ratio = min(2000 / img.width, 2000 / img.height)
-                    new_size = (int(img.width * ratio), int(img.height * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                if img.mode != 'RGB':
-                    img = img.convert('RGB')
-                
-                if watermark:
-                    img = self.apply_watermark(img, watermark)
-
-                if i == 0:
-                    first_image = img
-                else:
-                    images_to_save.append(img)
+                try:
+                    img = Image.open(img_path)
+                    img.load() # force loading to catch decoder errors
+                    if img.width > 2000 or img.height > 2000:
+                        ratio = min(2000 / img.width, 2000 / img.height)
+                        new_size = (int(img.width * ratio), int(img.height * ratio))
+                        img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    if watermark:
+                        img = self.apply_watermark(img, watermark)
+    
+                    if first_image is None:
+                        first_image = img
+                    else:
+                        images_to_save.append(img)
+                except Exception as e:
+                    logger.warning(f"Skipping corrupted image {img_path}: {e}")
+                    continue
 
                 if i % 20 == 0:
                     gc.collect()

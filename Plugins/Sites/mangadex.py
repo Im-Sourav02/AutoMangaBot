@@ -135,6 +135,93 @@ class MangaDexAPI:
             logger.error(f"Failed to get chapters: {e}")
             return []
 
+    async def search_manga(self, query: str, limit: int = 10) -> List[Dict]:
+        try:
+            params = {
+                'title': query,
+                'limit': limit,
+                'includes[]': ['cover_art'],
+                'order[relevance]': 'desc'
+            }
+            data = await self.api_request('/manga', params)
+            if not data or not data.get('data'): return []
+            
+            results = []
+            for item in data['data']:
+                attrs = item['attributes']
+                title_obj = attrs.get('title', {})
+                title = title_obj.get('en', next(iter(title_obj.values())) if title_obj else 'Unknown')
+                
+                results.append({
+                    'id': item['id'],
+                    'title': title
+                })
+            return results
+        except Exception as e:
+            logger.error(f"Failed to search manga: {e}")
+            return []
+
+    async def get_manga_chapters(self, manga_id: str, limit: int = 20, offset: int = 0, languages: list = ['en']) -> List[Dict]:
+        try:
+            params = {
+                "translatedLanguage[]": languages,
+                "order[chapter]": "desc",
+                "limit": limit,
+                "offset": offset,
+                "manga": manga_id,
+                "includes[]": ["scanlation_group"]
+            }
+            data = await self.api_request('/chapter', params)
+            if not data or not data.get('data'): return []
+            
+            chapters = []
+            for item in data['data']:
+                attrs = item['attributes']
+                if attrs.get('externalUrl'): continue
+                
+                group_name = "Unknown"
+                for rel in item.get('relationships', []):
+                    if rel['type'] == 'scanlation_group':
+                        group_name = rel.get('attributes', {}).get('name', 'Unknown')
+                        break
+                        
+                chapters.append({
+                    'id': item['id'],
+                    'chapter': attrs.get('chapter', '0'),
+                    'title': attrs.get('title', ''),
+                    'group': group_name
+                })
+            return chapters
+        except Exception as e:
+            logger.error(f"Failed to get manga chapters: {e}")
+            return []
+
+    async def get_chapter_info(self, chapter_id: str) -> Optional[Dict]:
+        try:
+            params = {"includes[]": ["manga"]}
+            data = await self.api_request(f'/chapter/{chapter_id}', params)
+            if not data or data.get('result') != 'ok': return None
+            
+            item = data['data']
+            attrs = item['attributes']
+            
+            manga_title = 'Unknown'
+            for rel in item.get('relationships', []):
+                if rel['type'] == 'manga':
+                    title_obj = rel.get('attributes', {}).get('title', {})
+                    manga_title = title_obj.get('en', next(iter(title_obj.values())) if title_obj else 'Unknown')
+                    break
+                    
+            return {
+                'id': item['id'],
+                'chapter': attrs.get('chapter', '0'),
+                'title': attrs.get('title', ''),
+                'manga_title': manga_title
+            }
+        except Exception as e:
+            logger.error(f"Failed to get chapter info: {e}")
+            return None
+
     async def get_chapter_images(self, chapter_id: str) -> Optional[List[str]]:
         try:
             data = await self.api_request(f'/at-home/server/{chapter_id}')

@@ -22,12 +22,16 @@ logger = logging.getLogger(__name__)
 
 from Plugins.Sites.mangakakalot import MangakakalotAPI
 from Plugins.Sites.allmanga import AllMangaAPI
+from Plugins.Sites.comick import ComickAPI
+from Plugins.Sites.atsumaru import AtsumaruAPI
 
 SITES = {
     "MangaDex": MangaDexAPI,
     "MangaForest": MangaForestAPI,
     "Mangakakalot": MangakakalotAPI,
     "AllManga": AllMangaAPI,
+    "Comick": ComickAPI,
+    "Atsumaru": AtsumaruAPI,
     "WebCentral": None # Placeholder until verified or imported
 }
 
@@ -41,7 +45,15 @@ def get_api_class(source):
     return SITES.get(source)
 
 
-@Client.on_message(filters.text & filters.private & ~filters.command(["start", "help", "settings", "search"]))
+def check_search_state(_, __, m):
+    if not m.from_user: return False
+    uid = m.from_user.id
+    if uid not in user_states: return True
+    return user_states[uid] == WAITING_CHAPTER_INPUT
+
+search_filter = filters.create(check_search_state)
+
+@Client.on_message(filters.text & filters.private & search_filter & ~filters.command(["start", "help", "settings", "search"]))
 async def message_handler(client, message):
     user_id = message.from_user.id
     
@@ -50,6 +62,36 @@ async def message_handler(client, message):
             await custom_dl_input_handler(client, message)
             return
         return
+
+    # If no state is active, treat the message as a manga search
+    query = message.text.strip()
+    if len(query) < 2:
+        await message.reply("❌ query too short.")
+        return
+    
+    buttons = []
+    row = []
+    for source in SITES.keys():
+        if SITES[source] is not None:
+            row.append(InlineKeyboardButton(source, callback_data=f"search_src_{source}_{query[:30]}"))
+            if len(row) == 2:  # 2 buttons per row
+                buttons.append(row)
+                row = []
+    
+    if row:
+        buttons.append(row)
+    
+    if not buttons:
+        await message.reply("❌ no sources available.")
+        return
+        
+    buttons.append([InlineKeyboardButton("❌ close", callback_data="stats_close")])
+    
+    await message.reply(
+        f"<b>🔍 search:</b> <code>{query}</code>\n\nselect a source to search in:",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
+    )
 
 @Client.on_message(filters.command("search") & filters.private)
 async def search_command_handler(client, message):
@@ -95,14 +137,14 @@ async def search_source_cb(client, callback_query):
     source = parts[2]
     query = parts[3] # this might be truncated, but we used Message text in original. 
     
-    api = get_api_class(source)
-    if not api:
+    api_class = get_api_class(source)
+    if not api_class:
         await callback_query.answer("source not available", show_alert=True)
         return
         
     status_msg = await callback_query.message.edit_text(f"<i>🔍 Searching {source}...</i>", parse_mode=enums.ParseMode.HTML)
     
-    async with API(Config) as api:
+    async with api_class(Config) as api:
         results = await api.search_manga(query)
     
     if not results:
@@ -129,10 +171,10 @@ async def view_manga_cb(client, callback_query):
     source = parts[1]
     manga_id = parts[2]
     
-    api = get_api_class(source)
-    if not api: return
+    api_class = get_api_class(source)
+    if not api_class: return
 
-    async with api(Config) as api:
+    async with api_class(Config) as api:
         info = await api.get_manga_info(manga_id)
     
     if not info:
@@ -335,7 +377,7 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                 await status_msg.edit_text("❌ failed to get chapter info.")
                 return
             
-            if meta.get('manga_title') in ['Unknown', None]:
+            if not meta.get('manga_title'):
                  m_info = await api.get_manga_info(manga_id)
                  if m_info: meta['manga_title'] = m_info['title']
 
@@ -387,14 +429,59 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                  return
             
             await status_msg.edit_text(f"<i>⬆ uploading...</i>", parse_mode=enums.ParseMode.HTML)
-            caption = f"<b>{meta['manga_title']} - Ch {meta['chapter']}</b>"
+            
+            manga_title = meta['manga_title']
+            chapter_num = meta['chapter']
+            chapter_title = meta.get('title', '')
+            
+            # Filename from user's /set_format template ({manga_name}, {chapter})
+            filename_format = await Seishiro.get_format()
+            formatted_filename = filename_format \
+                .replace("{manga_name}", manga_title) \
+                .replace("{chapter}", str(chapter_num)) \
+                .replace("{manga_title}", manga_title) \
+                .replace("{chapter_num}", str(chapter_num)) \
+                .replace("{chapter_title}", chapter_title or "")
+            safe_filename = "".join(c for c in formatted_filename if c.isalnum() or c in (' ', '-', '_', '.', '⌯', '[', ']', '@'))[:100].rstrip()
+            file_ext = final_path.suffix
+            if not safe_filename.endswith(file_ext):
+                safe_filename += file_ext
+            
+            # Caption from user's Caption setting (Seishiro.get_caption())
+            # Template vars: {manga_title}, {chapter_num}, {file_name}
+            user_caption = await Seishiro.get_caption()
+            if user_caption:
+                caption = user_caption \
+                    .replace("{manga_title}", manga_title) \
+                    .replace("{chapter_num}", str(chapter_num)) \
+                    .replace("{file_name}", safe_filename) \
+                    .replace("{manga_name}", manga_title) \
+                    .replace("{chapter}", str(chapter_num)) \
+                    .replace("{chapter_title}", chapter_title or "")
+            else:
+                caption = f"<b>{manga_title} - Ch {chapter_num}</b>"
+            
+            # Thumbnail from user's settings
+            custom_thumbnail = await Seishiro.get_config("custom_thumbnail")
+            thumb_path = None
+            if custom_thumbnail:
+                try:
+                    thumb_path = str(chapter_dir.parent / "thumb.jpg")
+                    await client.download_media(custom_thumbnail, file_name=thumb_path)
+                except Exception:
+                    thumb_path = None
             
             await client.send_document(
                 chat_id=target_chat_id,
                 document=final_path,
                 caption=caption,
+                file_name=safe_filename,
+                thumb=thumb_path,
                 parse_mode=enums.ParseMode.HTML
             )
+            
+            if thumb_path and Path(thumb_path).exists():
+                Path(thumb_path).unlink()
             
             shutil.rmtree(chapter_dir, ignore_errors=True)
             if final_path.exists(): final_path.unlink()
@@ -413,11 +500,14 @@ async def dl_ask_cb(client, callback_query):
     manga_id = data[3]
     chapter_id = "_".join(data[4:])
     
-    
+    try:
+        await callback_query.answer("Starting download...", show_alert=False)
+    except Exception:
+        pass
+        
     db_channel = await Seishiro.get_default_channel()
-    channel_id = int(db_channel) if db_channel else Config.CHANNEL_ID
+    channel_id = int(db_channel) if db_channel else callback_query.message.chat.id
     
-    await callback_query.answer("Starting download...", show_alert=False)
     await execute_download(client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id)
 
 
