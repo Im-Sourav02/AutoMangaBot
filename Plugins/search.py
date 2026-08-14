@@ -585,7 +585,7 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
     from pyrogram import enums
     from config import Config
     from Plugins.downloading import Downloader
-    from Plugins.Sites import get_api_class
+
     from Database.database import Seishiro
     
     status_chat_id = target_chat_id
@@ -747,7 +747,7 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
         logger.error(f"DL Error: {e}", exc_info=True)
         await status_msg.edit_text(f"❌ Error: {e}")
 
-async def execute_download(client, target_chat_id, source, manga_id, chapter_id, status_chat_id=None):
+async def execute_download(client, target_chat_id, source, manga_id, chapter_id, user_id, status_chat_id=None):
     """
     Downloads and uploads a chapter.
     status_chat_id: Where to send updates (if different from target).
@@ -1000,7 +1000,7 @@ async def toggle_format_cb(client, callback_query):
     
     # Refresh the menu to show the new button text
     callback_query.data = f"chapters_{source}_{manga_id}_{offset}"
-    await chapters_cb(client, callback_query)
+    await chapters_list_cb(client, callback_query)
 
 
 @Client.on_callback_query(filters.regex("^dl_pg_"))

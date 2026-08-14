@@ -338,57 +338,59 @@ async def rem_channel_cmd(client, message):
 @Client.on_message(filters.private & ~filters.command(['start', 'help', 'settings', 'search']), group=99)
 async def aup_id_input_handler(client, message):
     uid = message.from_user.id
-    if uid in user_states and user_states[uid] == 'WAITING_AUP_IDS':
-        if message.text and message.text.lower() == '/stop':
-            del user_states[uid]
-            await message.reply('Finished adding channels.')
-            
-            class DummyQuery:
-                def __init__(self, msg, uid):
-                    self.message = msg
-                    self.from_user = type('User', (), {'id': uid})()
-                    self.matches = [type('Match', (), {'group': lambda self, i: '1'})()]
-                async def answer(self, *args, **kwargs):
-                    pass
-            dummy_q = DummyQuery(message, uid)
-            await aup_menu(client, dummy_q)
-            return
+    if uid not in user_states or user_states[uid] != 'WAITING_AUP_IDS':
+        return
+        
+    if message.text and message.text.lower() == '/stop':
+        del user_states[uid]
+        await message.reply('Finished adding channels.')
+        
+        class DummyQuery:
+            def __init__(self, msg, uid):
+                self.message = msg
+                self.from_user = type('User', (), {'id': uid})()
+                self.matches = [type('Match', (), {'group': lambda self, i: '1'})()]
+            async def answer(self, *args, **kwargs):
+                pass
+        dummy_q = DummyQuery(message, uid)
+        await aup_menu(client, dummy_q)
+        return
 
-        chat_id = None
-        if message.forward_from_chat:
-            chat_id = message.forward_from_chat.id
-        elif message.text:
-            try:
-                chat_id = int(message.text.strip())
-            except ValueError:
-                chat_id = message.text.strip()
-                
-        if not chat_id:
-            await message.reply('Please send a valid Channel ID, Username, or forward a message.')
-            return
-            
+    chat_id = None
+    if message.forward_from_chat:
+        chat_id = message.forward_from_chat.id
+    elif message.text:
         try:
-            chat = await client.get_chat(chat_id)
-            title = chat.title or str(chat.id)
-            await Seishiro.add_auto_upload_channel(uid, chat.id, title)
+            chat_id = int(message.text.strip())
+        except ValueError:
+            chat_id = message.text.strip()
             
-            # Fuzzy match and link subscriptions for this user
-            subs_db = SubscriptionDB(Seishiro.database)
-            user_subs = await subs_db.get_user_subscriptions(uid)
-            linked_count = 0
-            
-            for sub in user_subs:
-                sub_title = sub.get('title', '')
-                if not sub_title: continue
-                # Match threshold 0.8
-                ratio = difflib.SequenceMatcher(None, sub_title.lower(), title.lower()).ratio()
-                if ratio > 0.8 or sub_title.lower() in title.lower() or title.lower() in sub_title.lower():
-                    await subs_db.update_auto_upload_channel_id(uid, sub['url'], chat.id)
-                    linked_count += 1
-            
-            msg = f'✅ Channel Added: {chat.id} ({title})'
-            if linked_count > 0:
-                msg += f'\n🔗 Linked to {linked_count} subscribed manga(s).'
-            await message.reply(msg)
-        except Exception as e:
-            await message.reply(f'Failed to add channel: {e}')
+    if not chat_id:
+        await message.reply('Please send a valid Channel ID, Username, or forward a message.')
+        return
+        
+    try:
+        chat = await client.get_chat(chat_id)
+        title = chat.title or str(chat.id)
+        await Seishiro.add_auto_upload_channel(uid, chat.id, title)
+        
+        # Fuzzy match and link subscriptions for this user
+        subs_db = SubscriptionDB(Seishiro.database)
+        user_subs = await subs_db.get_user_subscriptions(uid)
+        linked_count = 0
+        
+        for sub in user_subs:
+            sub_title = sub.get('title', '')
+            if not sub_title: continue
+            # Match threshold 0.8
+            ratio = difflib.SequenceMatcher(None, sub_title.lower(), title.lower()).ratio()
+            if ratio > 0.8 or sub_title.lower() in title.lower() or title.lower() in sub_title.lower():
+                await subs_db.update_auto_upload_channel_id(uid, sub['url'], chat.id)
+                linked_count += 1
+        
+        msg = f'✅ Channel Added: {chat.id} ({title})'
+        if linked_count > 0:
+            msg += f'\n🔗 Linked to {linked_count} subscribed manga(s).'
+        await message.reply(msg)
+    except Exception as e:
+        await message.reply(f'Failed to add channel: {e}')
