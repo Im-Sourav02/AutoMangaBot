@@ -13,6 +13,7 @@ import logging
 import gc
 from pathlib import Path
 from datetime import datetime
+from Plugins.monitoring import SubscriptionMonitor
 
 if sys.platform.startswith('win'):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -634,12 +635,18 @@ class MangaDexBot:
 
         monitor_task = asyncio.create_task(self.monitor_loop())
         
+        # Start new Subscription Monitor
+        sub_monitor = SubscriptionMonitor(self.telegram.app)
+        sub_monitor_task = asyncio.create_task(sub_monitor.start(interval=600)) # 10 minutes interval
+        
         try:
             await idle()
         except KeyboardInterrupt:
             logger.info("\nStopped by user")
         finally:
             monitor_task.cancel()
+            sub_monitor.stop()
+            sub_monitor_task.cancel()
             await self.telegram.stop()
             await self.save_state()
             await self.save_cache()

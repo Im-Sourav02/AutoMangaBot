@@ -11,3 +11,4 @@ dnspython
 python-dotenv
 lxml
 curl_cffi
+camoufox

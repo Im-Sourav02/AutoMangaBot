@@ -125,7 +125,6 @@ async def settings_input_listener(client, message):
                     await message.reply("❌ Failed to add channel to DB.")
                     return
                 
-                
                 curr_list = await Seishiro.get_auto_update_channels()
                 list_text = "\n".join([f"• {c.get('title', 'Unknown')} (`{c.get('_id')}`)" for c in curr_list])
                 
@@ -145,7 +144,6 @@ async def settings_input_listener(client, message):
             try:
                 cid = int(message.text)
                 if await Seishiro.remove_auto_update_channel(cid):
-                     
                      curr_list = await Seishiro.get_auto_update_channels()
                      list_text = "\n".join([f"• {c.get('title', 'Unknown')} (`{c.get('_id')}`)" for c in curr_list])
                      if not list_text: list_text = "None"
@@ -161,7 +159,6 @@ async def settings_input_listener(client, message):
             except ValueError:
                 await message.reply("❌ invalid id format.")
                 return
-        
         elif state == "waiting_password":
             if message.text.upper() == "OFF":
                 await Seishiro.set_config("pdf_password", None)

@@ -25,8 +25,11 @@ class MangakakalotAPI:
             'Accept-Language': 'en-US,en;q=0.5',
         }
 
-    async def aenter(self):
+    async def __aenter__(self):
         return self
+
+    async def __aexit__(self, *_):
+        pass
 
     async def aexit(self, exc_type, exc_val, exc_tb):
         pass

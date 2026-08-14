@@ -9,6 +9,9 @@ from datetime import datetime, date, timedelta
 from typing import List, Optional
 from config import Config
 
+from Database.subscriptions import SubscriptionDB
+from Database.settings import UserSettingsDB
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -34,6 +37,9 @@ class Master:
         self.interval_time = self.database['interval_time']
         self.manga_cache = self.database['manga_cache']
         self.col = self.user_data
+
+        self.subs_db = SubscriptionDB(self.database)
+        self.settings_db = UserSettingsDB(self.database)
         
         self.ADMINS = []
 
@@ -756,6 +762,47 @@ class Master:
             return True
         except Exception as e:
             logging.error(f"Error clearing auc: {e}")
+            return False
+
+    async def get_auto_upload_channels(self, user_id: int) -> list:
+        """Get list of auto upload channels (id, title)"""
+        try:
+            cursor = self.database['auto_upload_channels'].find({"user_id": user_id})
+            channels = await cursor.to_list(None)
+            return channels
+        except Exception as e:
+            logging.error(f"Error getting aup channels: {e}")
+            return []
+
+    async def add_auto_upload_channel(self, user_id: int, channel_id: int, title: str) -> bool:
+        """Add a channel to auto upload list"""
+        try:
+            await self.database['auto_upload_channels'].update_one(
+                {"channel_id": channel_id, "user_id": user_id},
+                {"$set": {"_id": f"{user_id}_{channel_id}", "channel_id": channel_id, "user_id": user_id, "title": title, "added_at": datetime.utcnow()}},
+                upsert=True
+            )
+            return True
+        except Exception as e:
+            logging.error(f"Error adding aup {channel_id}: {e}")
+            return False
+
+    async def remove_auto_upload_channel(self, user_id: int, channel_id: int) -> bool:
+        """Remove channel from auto upload list"""
+        try:
+            res = await self.database['auto_upload_channels'].delete_one({"channel_id": channel_id, "user_id": user_id})
+            return res.deleted_count > 0
+        except Exception as e:
+            logging.error(f"Error removing aup {channel_id}: {e}")
+            return False
+
+    async def clear_auto_upload_channels(self, user_id: int) -> bool:
+        """Clear all auto upload channels"""
+        try:
+            await self.database['auto_upload_channels'].delete_many({"user_id": user_id})
+            return True
+        except Exception as e:
+            logging.error(f"Error clearing aup: {e}")
             return False
 
 

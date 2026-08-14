@@ -9,7 +9,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from Database.database import Seishiro
 from Plugins.helper import get_styled_text, user_states, edit_msg_with_pic
 from Plugins.Settings.input_helper import timeout_handler
-from Plugins.Settings.main_settings import settings_main_menu_2
+from Plugins.Settings.main_settings import settings_main_menu
 import asyncio
 import logging
 
@@ -317,7 +317,7 @@ async def toggle_monitor_cb(client, callback_query):
         except Exception as e:
             logger.error(f"Failed to trigger immediate check: {e}")
 
-    await settings_main_menu_2(client, callback_query)
+    await settings_main_menu(client, callback_query)
 
 @Client.on_callback_query(filters.regex("^view_progress$"))
 async def view_progress_cb(client, callback_query):

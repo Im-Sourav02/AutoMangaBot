@@ -69,30 +69,26 @@ async def start_msg(client, message):
             logger.error(f"Database error (Add User): {db_e}")
 
         caption = (
-            f"<b>👋 hello {message.from_user.first_name}!</b>\n\n"
-            f"<blockquote><b>i am an advanced manga downloader & uploader bot. "
-            f"i can help you manage and automate your manga channel.</b></blockquote>\n\n"
-            f"<b><blockquote>🚀 features:</b>\n"
-            f"• auto-upload to channel\n"
-            f"• custom thumbnails\n"
-            f"• watermarking\n</blockquote>" 
-
-            f"<i>click the buttons below to control me!</i>"
+            f"<blockquote><b>🌸 WELCOME TO MANGA BOT!!</b></blockquote>\n\n"
+            f"<blockquote><b>📖 USE /search <name> TO FIND\n"
+            f"ANY MANGA / MANHWA!</b></blockquote>\n\n"
+            f"<blockquote><b>⚙️ USE /us TO CUSTOMIZE YOUR SETTINGS\n"
+            f"🔔 USE /subs TO VIEW YOUR SUBSCRIPTIONS</b></blockquote>"
         )
         
-        if hasattr(Config, "PICS") and Config.PICS:
-            START_PIC = random.choice(Config.PICS)
-        else:
-            START_PIC = "https://ibb.co/Y7JxBDPp"
+        START_PIC = "https://pictr.com/images/2026/08/14/xqMrZq.jpg"
 
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton(" Settings", callback_data="settings_menu"),
-                InlineKeyboardButton(" Help", callback_data="help_menu")
+                InlineKeyboardButton("⚙️ Settings", callback_data="settings_menu"),
+                InlineKeyboardButton("📥 Queue", callback_data="queue_menu")
             ],
             [
-                InlineKeyboardButton(" Official Channel", url="https://t.me/RexBots_Official"),
-                InlineKeyboardButton(" Developer", url="https://t.me/RexBots_Official")
+                InlineKeyboardButton("🔔 Subscribes", callback_data="subs_menu"),
+                InlineKeyboardButton("❓ Help", callback_data="help_menu")
+            ],
+            [
+                InlineKeyboardButton("❌ CLOSE", callback_data="close")
             ]
         ])
 

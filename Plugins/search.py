@@ -10,9 +10,11 @@ from Plugins.downloading import Downloader
 from Plugins.Sites.mangadex import MangaDexAPI
 from Plugins.Sites.mangaforest import MangaForestAPI
 from Database.database import Seishiro
+from Database.subscriptions import SubscriptionDB
 from Plugins.helper import edit_msg_with_pic, get_styled_text, user_states, user_data, WAITING_CHAPTER_INPUT
 import logging
 import asyncio
+import difflib
 import shutil
 from pathlib import Path
 import os
@@ -24,15 +26,58 @@ from Plugins.Sites.mangakakalot import MangakakalotAPI
 from Plugins.Sites.allmanga import AllMangaAPI
 from Plugins.Sites.comick import ComickAPI
 from Plugins.Sites.atsumaru import AtsumaruAPI
+from Plugins.Sites.omegascans import OmegaScansAPI
+from Plugins.Sites.theblank import TheBlankAPI
+# Madara-based
+from Plugins.Sites.toonily import ToonilyAPI
+from Plugins.Sites.manhwaread import ManhwaReadAPI
+from Plugins.Sites.weebtoon import WebtoonScanAPI
+from Plugins.Sites.hentai20 import Hentai20API
+from Plugins.Sites.manga18fx import Manga18fxAPI
+from Plugins.Sites.manga18club import Manga18clubAPI
+from Plugins.Sites.manhwa18 import Manhwa18API
+from Plugins.Sites.manhwaclub import ManhwaClubAPI
+from Plugins.Sites.manhwahub import ManhwaHubAPI
+from Plugins.Sites.manytoon import ManyToonAPI
+from Plugins.Sites.hiperdex import HiperdexAPI
+from Plugins.Sites.mangaforfree import MangaForFreeAPI
+from Plugins.Sites.mangadistrict import MangaDistrictAPI
+# Custom scrapers
+from Plugins.Sites.manganato import MangaNatoAPI
+from Plugins.Sites.asurascans import AsuraScansAPI
+from Plugins.Sites.vortexscans import VortexScansAPI
+from Plugins.Sites.toongod import ToonGodAPI
 
 SITES = {
+    # Original sources
     "MangaDex": MangaDexAPI,
     "MangaForest": MangaForestAPI,
     "Mangakakalot": MangakakalotAPI,
     "AllManga": AllMangaAPI,
     "Comick": ComickAPI,
     "Atsumaru": AtsumaruAPI,
-    "WebCentral": None # Placeholder until verified or imported
+    "OmegaScans": OmegaScansAPI,
+    "TheBlank": TheBlankAPI,
+    "WebCentral": None,
+    # Madara-based sources
+    "Toonily": ToonilyAPI,
+    "ManhwaRead": ManhwaReadAPI,
+    # WebtoonScan removed — domain dead
+    "Hentai20": Hentai20API,
+    "Manga18fx": Manga18fxAPI,
+    "Manga18Club": Manga18clubAPI,
+    "Manhwa18": Manhwa18API,
+    "ManhwaClub": ManhwaClubAPI,
+    "ManhwaHub": ManhwaHubAPI,
+    "ManyToon": ManyToonAPI,
+    "Hiperdex": HiperdexAPI,
+    "MangaForFree": MangaForFreeAPI,
+    "MangaDistrict": MangaDistrictAPI,
+    # Custom scrapers
+    "MangaNato": MangaNatoAPI,
+    "AsuraScans": AsuraScansAPI,
+    "VortexScans": VortexScansAPI,
+    "ToonGod": ToonGodAPI,
 }
 
 try:
@@ -42,11 +87,19 @@ except ImportError:
     pass
 
 def get_api_class(source):
-    return SITES.get(source)
+    # Try exact match first, then case-insensitive
+    cls = SITES.get(source)
+    if cls is not None:
+        return cls
+    for key, val in SITES.items():
+        if key.lower() == source.lower():
+            return val
+    return None
 
 
 def check_search_state(_, __, m):
-    if not m.from_user: return False
+    if m.text and m.text.startswith('/'):
+        return False
     uid = m.from_user.id
     if uid not in user_states: return True
     return user_states[uid] == WAITING_CHAPTER_INPUT
@@ -85,6 +138,7 @@ async def message_handler(client, message):
         await message.reply("❌ no sources available.")
         return
         
+    buttons.append([InlineKeyboardButton("🌐 Search All Sources", callback_data=f"search_all_{query[:30]}")])
     buttons.append([InlineKeyboardButton("❌ close", callback_data="stats_close")])
     
     await message.reply(
@@ -122,6 +176,7 @@ async def search_command_handler(client, message):
         await message.reply("❌ no sources available.")
         return
         
+    buttons.append([InlineKeyboardButton("🌐 Search All Sources", callback_data=f"search_all_{query[:30]}")])
     buttons.append([InlineKeyboardButton("❌ close", callback_data="stats_close")])
     
     await message.reply(
@@ -152,9 +207,13 @@ async def search_source_cb(client, callback_query):
         return
 
     buttons = []
-    for m in results[:10]: # top 10
-        title = m['title']
-        buttons.append([InlineKeyboardButton(title, callback_data=f"view_{source}_{m['id']}")])
+    for m in results[:10]:  # top 10
+        title = m['title'][:35]
+        # Telegram callback_data limit is 64 bytes — guard it
+        cb = f"view_{source}_{m['id']}"
+        if len(cb.encode()) > 62:
+            cb = f"view_{source}_{m['id'][:62 - len(source) - 6]}"
+        buttons.append([InlineKeyboardButton(title, callback_data=cb)])
     
     buttons.append([InlineKeyboardButton("❌ close", callback_data="stats_close")])
     
@@ -163,6 +222,66 @@ async def search_source_cb(client, callback_query):
         reply_markup=InlineKeyboardMarkup(buttons),
         parse_mode=enums.ParseMode.HTML
     )
+
+
+@Client.on_callback_query(filters.regex("^search_all_"))
+async def search_all_cb(client, callback_query):
+    """Search all available sources concurrently and aggregate results."""
+    query = callback_query.data[len("search_all_"):]
+    status_msg = await callback_query.message.edit_text(
+        f"<i>🌐 Searching all sources for <b>{query}</b>...</i>",
+        parse_mode=enums.ParseMode.HTML
+    )
+
+    active_sources = {name: cls for name, cls in SITES.items() if cls is not None}
+
+    async def search_one(name, cls):
+        try:
+            async with cls(Config) as api:
+                results = await api.search_manga(query, limit=5)
+            return name, results
+        except Exception as e:
+            logger.warning(f"search_all: {name} failed: {e}")
+            return name, []
+
+    tasks = [search_one(name, cls) for name, cls in active_sources.items()]
+    all_results = await asyncio.gather(*tasks)
+
+    buttons = []
+    found_any = False
+    sources_shown = 0
+    for source_name, results in all_results:
+        if not results:
+            continue
+        found_any = True
+        if sources_shown >= 10:  # cap: at most 10 sources to keep button count < 40
+            continue
+        sources_shown += 1
+        # Section label row
+        buttons.append([InlineKeyboardButton(f"── {source_name} ──", callback_data="noop")])
+        for m in results[:2]:  # 2 per source (10 sources × 2 = 20 result buttons max)
+            title = m['title'][:35]
+            # Guard 64-byte callback_data limit
+            cb = f"view_{source_name}_{m['id']}"
+            if len(cb.encode()) > 62:
+                cb = f"view_{source_name}_{m['id'][:62 - len(source_name) - 6]}"
+            buttons.append([InlineKeyboardButton(title, callback_data=cb)])
+
+    if not found_any:
+        await status_msg.edit_text(f"❌ no results found in any source for <b>{query}</b>.", parse_mode=enums.ParseMode.HTML)
+        return
+
+    buttons.append([InlineKeyboardButton("❌ close", callback_data="stats_close")])
+    await status_msg.edit_text(
+        f"<b>🌐 Search All — results for:</b> <code>{query}</code>",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode=enums.ParseMode.HTML
+    )
+
+
+@Client.on_callback_query(filters.regex("^noop$"))
+async def noop_cb(client, callback_query):
+    await callback_query.answer()
 
 
 @Client.on_callback_query(filters.regex("^view_"))
@@ -181,21 +300,53 @@ async def view_manga_cb(client, callback_query):
         await callback_query.answer("error fetching details", show_alert=True)
         return
 
+    # Check subscription status
+    user_id = callback_query.from_user.id
+    subs = await Seishiro.subs_db.get_user_subscriptions(user_id)
+    is_subscribed = any(sub.get('url') == manga_id and sub.get('source') == source for sub in subs)
+
     caption = (
-        f"<b>📖 {info['title']}</b>\n"
-        f"<b>Source:</b> {source}\n"
-        f"<b>ID:</b> <code>{manga_id}</code>\n\n"
-        f"Select an option:"
+        f"<blockquote><b>{info['title']}</b></blockquote>\n\n"
+        f"<b>Status:</b> {info.get('status', 'N/A')}\n"
+        f"<b>Genres:</b> {info.get('genres', 'N/A')}\n\n"
+        f"<b>Description:</b>\n"
+        f"<blockquote>{info.get('description', 'N/A')[:300]}...</blockquote>"
     )
     
+    # Safe title for callback (max 64 bytes total)
+    safe_title = info['title'][:20]
+    
+    if is_subscribed:
+        sub_btn = InlineKeyboardButton("🔕 UNSUBSCRIBE 🔕", callback_data=f"unsub_{source}_{manga_id}")
+    else:
+        # We need to pass title safely or store it temporarily, but callback limit is tight
+        # Since we just have source and manga_id, the sub handler will need to fetch it again if it needs the title.
+        sub_btn = InlineKeyboardButton("🔔 SUBSCRIBE 🔔", callback_data=f"sub_{source}_{manga_id}")
+        
     buttons = [
-        [InlineKeyboardButton("⬇ download chapters", callback_data=f"chapters_{source}_{manga_id}_0")],
-        [InlineKeyboardButton("⬇ custom download (range)", callback_data=f"custom_dl_{source}_{manga_id}")],
-        [InlineKeyboardButton("❌ close", callback_data="stats_close")] 
+        [
+            InlineKeyboardButton("▶ CHAPTERS ◀", callback_data=f"chapters_{source}_{manga_id}_0"),
+            InlineKeyboardButton("▶ 𝖡𝖺𝗍𝖼𝗁 ◀", callback_data=f"custom_dl_{source}_{manga_id}")
+        ],
+        [sub_btn],
+        [
+            InlineKeyboardButton("(っ◐◡◐)っ", callback_data="noop"), 
+            InlineKeyboardButton("| CLOSE |", callback_data="stats_close")
+        ]
     ]
     
     msg = callback_query.message
-    await edit_msg_with_pic(msg, caption, InlineKeyboardMarkup(buttons))
+    
+    # Check if there is a cover image available in info
+    cover_url = info.get('cover')
+    try:
+        if cover_url:
+            await edit_msg_with_pic(msg, caption, InlineKeyboardMarkup(buttons), pic=cover_url)
+        else:
+            await edit_msg_with_pic(msg, caption, InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error editing manga card: {e}")
+        await edit_msg_with_pic(msg, caption, InlineKeyboardMarkup(buttons))
 
 
 
@@ -221,36 +372,74 @@ async def chapters_list_cb(client, callback_query):
         await callback_query.answer("No more chapters.", show_alert=True)
         return
 
+    # Calculate offset logic
+    # offset is chapter index (0 = first page of 10)
+    page_size = 10
+    current_page = (offset // page_size) + 1
+    
+    # We need total chapters to know when to stop
+    # But some sources don't give total length easily, so we just check if we got chapters
+    
     buttons = []
     row = []
     for ch in chapters:
         ch_num = ch['chapter']
-        btn_text = f"ch {ch_num}"
-        
-        
-        row.append(InlineKeyboardButton(btn_text, callback_data=f"dl_ask_{source}_{manga_id}_{ch['id'][:20]}")) # DANGEROUS HACK
+        btn_text = f"Chapter {ch_num}"
+        row.append(InlineKeyboardButton(btn_text, callback_data=f"dl_ask_{source}_{manga_id}_{ch['id'][:20]}"))
         if len(row) == 2:
             buttons.append(row)
             row = []
     if row: buttons.append(row)
     
-    nav = []
-    if offset >= 10:
-        nav.append(InlineKeyboardButton("⬅ prev", callback_data=f"chapters_{source}_{manga_id}_{offset-10}"))
-    nav.append(InlineKeyboardButton("next ➡", callback_data=f"chapters_{source}_{manga_id}_{offset+10}"))
-    buttons.append(nav)
+    # Pagination: << 5x, < 2x, <, >, 2x >, 5x >>
+    # Wait, we need to know max pages. We'll just provide the buttons and if they hit an empty page it says "No more".
+    # User requested: >>, 2x>, 5x>
+    nav_row_1 = []
+    nav_row_2 = []
     
-    buttons.append([InlineKeyboardButton("⬅ back to manga", callback_data=f"view_{source}_{manga_id}")])
+    if offset >= page_size:
+        nav_row_1.append(InlineKeyboardButton("<<", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size}"))
+    if offset >= page_size * 2:
+        nav_row_1.insert(0, InlineKeyboardButton("<2x", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*2}"))
+    if offset >= page_size * 5:
+        nav_row_1.insert(0, InlineKeyboardButton("<5x", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*5}"))
+        
+    nav_row_2.append(InlineKeyboardButton(">>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size}"))
+    nav_row_2.append(InlineKeyboardButton("2x>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*2}"))
+    nav_row_2.append(InlineKeyboardButton("5x>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*5}"))
     
-    caption_text = f"<b>select chapter to download (standard):</b>\npage: {int(offset/10)+1}\n<i>note: uploads to default channel.</i>"
+    if nav_row_1: buttons.append(nav_row_1)
+    if nav_row_2: buttons.append(nav_row_2)
+    
+    # Check if subscribed
+    user_id = callback_query.from_user.id
+    subs = await Seishiro.subs_db.get_user_subscriptions(user_id)
+    is_subscribed = any(sub.get('url') == manga_id and sub.get('source') == source for sub in subs)
+    sub_text = "🔕 UNSUBSCRIBE 🔕" if is_subscribed else "🔔 SUBSCRIBE 🔔"
+    sub_cb = f"unsub_{source}_{manga_id}" if is_subscribed else f"sub_{source}_{manga_id}"
+
+    # Bottom utilities
+    buttons.extend([
+        [InlineKeyboardButton("Single CBZ", callback_data="noop")], # Not fully spec'd out
+        [InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data="noop"), InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data="noop")],
+        [InlineKeyboardButton(sub_text, callback_data=sub_cb)],
+        [InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"), InlineKeyboardButton("| CLOSE |", callback_data="stats_close")]
+    ])
+    
+    caption_text = f"<b>Chapter Selection:</b>\nPage: {current_page}"
     
     try:
-        if callback_query.message.photo:
-            await callback_query.message.edit_caption(caption=caption_text, reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await callback_query.message.edit_text(caption_text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode=enums.ParseMode.html)
+        api_class = get_api_class(source)
+        cover_url = None
+        if api_class:
+            async with api_class(Config) as api:
+                info = await api.get_manga_info(manga_id)
+                if info:
+                    cover_url = info.get('cover')
+
+        await edit_msg_with_pic(callback_query.message, caption_text, InlineKeyboardMarkup(buttons), pic=cover_url)
     except Exception as e:
-        print(f"Edit error: {e}")
+        logger.error(f"Edit error: {e}")
 
 
 # CantarellaBots
@@ -357,7 +546,11 @@ async def custom_dl_input_handler(client, message):
     to_download.sort(key=lambda x: float(x['chapter']))
     
     for ch in to_download:
-        await execute_download(client, message.chat.id, source, manga_id, ch['id'], user_id) ## Use user_id as upload target?
+        import Plugins.helper as helper
+        if helper.CANCEL_TASKS.get(message.chat.id, False):
+            helper.CANCEL_TASKS[message.chat.id] = False
+            break
+        await execute_download(client, message.chat.id, source, manga_id, ch['id'], user_id)
 
 
 async def execute_download(client, target_chat_id, source, manga_id, chapter_id, status_chat_id=None):
@@ -387,13 +580,18 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
             await status_msg.edit_text(f"❌ no images in chapter {meta.get('chapter', '?')}")
             return
             
-        chapter_dir = Path(Config.DOWNLOAD_DIR) / f"{source}_{manga_id}" / f"ch_{meta['chapter']}"
+        # Sanitize manga_id for use in directory names (Windows forbids | : * ? " < > \)
+        safe_manga_id = re.sub(r'[\\/:*?"<>|]', '_', manga_id)
+        chapter_dir = Path(Config.DOWNLOAD_DIR) / f"{source}_{safe_manga_id}" / f"ch_{meta['chapter']}"
         chapter_dir.mkdir(parents=True, exist_ok=True)
         
         await status_msg.edit_text(f"<i>⬇ downloading {len(images)} pages...</i>", parse_mode=enums.ParseMode.HTML)
         
         async with Downloader(Config) as downloader:
-            if not await downloader.download_images(images, chapter_dir):
+            # Pass the source site as Referer so hotlink-protected CDNs accept the request
+            dl_referer = getattr(api, 'base_url', None) or getattr(api, '_base_url', None)
+            dl_headers = {'Referer': dl_referer.rstrip('/') + '/'} if dl_referer else None
+            if not await downloader.download_images(images, chapter_dir, headers=dl_headers):
                  await status_msg.edit_text("❌ download failed.")
                  return
             
@@ -471,14 +669,96 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                 except Exception:
                     thumb_path = None
             
-            await client.send_document(
-                chat_id=target_chat_id,
-                document=final_path,
-                caption=caption,
-                file_name=safe_filename,
-                thumb=thumb_path,
-                parse_mode=enums.ParseMode.HTML
-            )
+            dump_channel = await Seishiro.get_config("dump_channel")
+            
+            primary_chat = dump_channel or target_chat_id
+            
+            try:
+                # 1. Check if there is an Auto Upload Channel matching the manga title
+                aup_channels = await Seishiro.get_auto_upload_channels(target_chat_id)
+                auto_upload_id = None
+                for chan in aup_channels:
+                    c_title = chan.get('title', '').lower()
+                    if not c_title: continue
+                    ratio = difflib.SequenceMatcher(None, manga_title.lower(), c_title).ratio()
+                    if ratio > 0.8 or manga_title.lower() in c_title or c_title in manga_title.lower():
+                        auto_upload_id = chan.get('_id')
+                        break
+
+                should_send_to_aup = False
+                subs_db = SubscriptionDB(Seishiro.database)
+
+                if auto_upload_id:
+                    # Check if user is subscribed to this manga
+                    user_subs = await subs_db.get_user_subscriptions(target_chat_id)
+                    sub_record = None
+                    for sub in user_subs:
+                        if sub.get('title', '').lower() == manga_title.lower() or sub.get('url') == meta.get('manga_id'):
+                            sub_record = sub
+                            break
+                    
+                    try:
+                        current_ch_num = float(chapter_num)
+                    except ValueError:
+                        current_ch_num = 0.0
+
+                    if not sub_record or not sub_record.get('latest_chapter'):
+                        # If no subscription or no latest_chapter, we set it to this episode and create a sub for it
+                        should_send_to_aup = True
+                        if sub_record:
+                            await subs_db.update_last_chapter(target_chat_id, sub_record['url'], sub_record['source'], str(chapter_num))
+                            await subs_db.update_auto_upload_channel_id(target_chat_id, sub_record['url'], auto_upload_id)
+                        else:
+                            sub_data = {
+                                "id": manga_id,
+                                "title": manga_title,
+                                "latest_chapter": str(chapter_num),
+                                "auto_upload_channel_id": auto_upload_id
+                            }
+                            await subs_db.add_subscription(target_chat_id, sub_data, source)
+                    else:
+                        try:
+                            latest_ch_num = float(sub_record['latest_chapter'])
+                        except ValueError:
+                            latest_ch_num = 0.0
+                        
+                        if current_ch_num > latest_ch_num:
+                            should_send_to_aup = True
+                            await subs_db.update_last_chapter(target_chat_id, sub_record['url'], sub_record['source'], str(chapter_num))
+                            await subs_db.update_auto_upload_channel_id(target_chat_id, sub_record['url'], auto_upload_id)
+                        else:
+                            should_send_to_aup = False
+
+                msg = await client.send_document(
+                    chat_id=primary_chat,
+                    document=final_path,
+                    caption=caption,
+                    file_name=safe_filename,
+                    thumb=thumb_path,
+                    parse_mode=enums.ParseMode.HTML
+                )
+                
+                if should_send_to_aup and auto_upload_id:
+                    try:
+                        if msg and msg.document:
+                            await client.send_document(auto_upload_id, msg.document.file_id, caption=caption)
+                        else:
+                            await client.send_document(auto_upload_id, final_path, caption=caption)
+                    except Exception as e:
+                        logger.error(f"Failed to send to auto upload channel {auto_upload_id}: {e}")
+                
+                if dump_channel and dump_channel != target_chat_id:
+                    # Send to the user as well since primary was dump
+                    try:
+                        if msg and msg.document:
+                            await client.send_document(target_chat_id, msg.document.file_id, caption=caption)
+                        else:
+                            await client.send_document(target_chat_id, final_path, caption=caption)
+                    except Exception as e:
+                        logger.error(f"Failed to send to user {target_chat_id}: {e}")
+            except Exception as e:
+                logger.error(f"Upload failed: {e}")
+                await status_msg.edit_text("❌ failed to upload file.")
             
             if thumb_path and Path(thumb_path).exists():
                 Path(thumb_path).unlink()

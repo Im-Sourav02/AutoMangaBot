@@ -36,17 +36,17 @@ import random
 from pyrogram.types import InputMediaPhoto
 
 def get_random_pic():
-    if hasattr(Config, "PICS") and Config.PICS:
-        return random.choice(Config.PICS)
-    return "https://ibb.co/mVkSySr7"
+    return "https://pictr.com/images/2026/08/14/xqMrZq.jpg"
 
-async def edit_msg_with_pic(message, text, buttons):
+async def edit_msg_with_pic(message, text, buttons, pic=None):
     """
-    Edits a Message with a new random photo and text.
+    Edits a Message with a new photo and text.
     If original Message has photo, uses edit_media.
     Else, deletes and sends new photo.
     """
-    pic = get_random_pic()
+    if not pic:
+        pic = get_random_pic()
+        
     try:
         if message.photo:
             await message.edit_media(
@@ -111,3 +111,6 @@ async def check_fsub(client, user_id):
 # Don't Remove Credit
 # Telegram Channel @CantarellaBots
 #Supoort group @rexbotschat
+
+# Global cancellation flag for /clean_tsk (per user)
+CANCEL_TASKS = {}

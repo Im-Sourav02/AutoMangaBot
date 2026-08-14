@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.env
+*.session
+downloads/
+scratch/
+test*.py
+*.webp
+*.pdf
+manga_ids_cache.json
+fix_toonily.py
+generate_sites.py
+write_theblank.py

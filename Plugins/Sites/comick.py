@@ -21,7 +21,7 @@ class ComickAPI:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.session:
-            self.session.close()
+            await self.session.close()
 
     async def api_request(self, endpoint: str, params: dict = None) -> Optional[dict]:
         try:

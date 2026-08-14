@@ -9,7 +9,7 @@ from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from Database.database import Seishiro
 from Plugins.helper import get_styled_text, user_states, edit_msg_with_pic
 from Plugins.Settings.input_helper import timeout_handler
-from Plugins.Settings.main_settings import settings_main_menu_2
+from Plugins.Settings.main_settings import settings_main_menu
 import asyncio
 from config import Config
 

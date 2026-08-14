@@ -42,11 +42,35 @@ class Downloader:
             await asyncio.sleep(0.25)
 
     async def download_image(self, url: str, output_path: Path, max_retries: int = 3, headers: dict = None) -> bool:
+        # Merge per-request headers with session defaults so we keep User-Agent etc.
+        merged = dict(self.session.headers)
+        if headers:
+            merged.update(headers)
+
         for attempt in range(max_retries):
             try:
-                request_headers = headers if headers else self.session.headers
-                async with self.session.get(url, headers=request_headers) as response:
+                async with self.session.get(url, headers=merged) as response:
                     if response.status == 429:
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    if response.status == 403:
+                        # Try curl_cffi as fallback (bypasses hotlink checks)
+                        try:
+                            from curl_cffi.requests import AsyncSession as CffiSession
+                            async with CffiSession(impersonate="chrome124") as cs:
+                                r = await cs.get(url, headers=merged)
+                                if r.status_code == 200:
+                                    data = r.content
+                                    img = Image.open(io.BytesIO(data))
+                                    img.load()
+                                    if img.mode != 'RGB':
+                                        img = img.convert('RGB')
+                                    output_path = output_path.with_suffix('.jpg')
+                                    img.save(output_path, 'JPEG', quality=95)
+                                    img.close()
+                                    return True
+                        except Exception as cf_err:
+                            logger.debug(f"curl_cffi fallback failed for {url}: {cf_err}")
                         await asyncio.sleep(2 ** attempt)
                         continue
                     response.raise_for_status()
@@ -124,10 +148,17 @@ class Downloader:
 
             for i, img_path in enumerate(img_files):
                 img = Image.open(img_path)
-                if img.width > 2000 or img.height > 2000:
-                    ratio = min(2000 / img.width, 2000 / img.height)
-                    new_size = (int(img.width * ratio), int(img.height * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                # Manga pages can be very tall strips — cap width at 2500px,
+                # but allow height up to 16000px to preserve long-strip format.
+                max_width, max_height = 2500, 16000
+                if img.width > max_width or img.height > max_height:
+                    ratio = min(
+                        max_width / img.width if img.width > 0 else 1,
+                        max_height / img.height if img.height > 0 else 1
+                    )
+                    if ratio < 1.0:
+                        new_size = (int(img.width * ratio), int(img.height * ratio))
+                        img = img.resize(new_size, Image.Resampling.LANCZOS)
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
 
@@ -143,8 +174,8 @@ class Downloader:
                 return None
 
             first_image.save(
-                pdf_path, "PDF", resolution=72.0, save_all=True,
-                append_images=images_to_save, optimize=True
+                pdf_path, "PDF", resolution=150.0, save_all=True,
+                append_images=images_to_save, quality=95
             )
 
             if pdf_path.stat().st_size > self.Config.MAX_PDF_SIZE:
@@ -282,11 +313,11 @@ class Downloader:
             return False
 
     def create_pdf_v2(self, chapter_dir: Path, manga_title: str, chapter_num: str, chapter_title: str, intro: Path = None, outro: Path = None, quality: int = None, watermark: dict = None, password: str = None) -> Optional[Path]:
-         try:
+        try:
             clean_title = re.sub(r'\[Ch-.*?\]', '', manga_title, flags=re.IGNORECASE)
             clean_title = re.sub(r'\s*-\s*Chapter\s*\d+', '', clean_title, flags=re.IGNORECASE)
             clean_title = clean_title.strip()
-            
+
             base_name = f"{clean_title} - Ch {chapter_num}"
             if chapter_title:
                 base_name += f" - {chapter_title}"
@@ -304,23 +335,27 @@ class Downloader:
 
             images_to_save = []
             first_image = None
-            
-            q = quality if quality is not None else 85
-            
+            q = quality if quality is not None else 95
+            # Manga pages can be very tall strips — cap width at 2500px,
+            # but allow height up to 16000px to preserve long-strip format.
+            max_width, max_height = 2500, 16000
+
             for i, img_path in enumerate(final_images):
                 try:
                     img = Image.open(img_path)
-                    img.load() # force loading to catch decoder errors
-                    if img.width > 2000 or img.height > 2000:
-                        ratio = min(2000 / img.width, 2000 / img.height)
-                        new_size = (int(img.width * ratio), int(img.height * ratio))
-                        img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    img.load()  # force load to catch decoder errors early
+                    if img.width > max_width or img.height > max_height:
+                        ratio = min(
+                            max_width / img.width if img.width > 0 else 1,
+                            max_height / img.height if img.height > 0 else 1
+                        )
+                        if ratio < 1.0:
+                            new_size = (int(img.width * ratio), int(img.height * ratio))
+                            img = img.resize(new_size, Image.Resampling.LANCZOS)
                     if img.mode != 'RGB':
                         img = img.convert('RGB')
-                    
                     if watermark:
                         img = self.apply_watermark(img, watermark)
-    
                     if first_image is None:
                         first_image = img
                     else:
@@ -336,25 +371,21 @@ class Downloader:
                 return None
 
             first_image.save(
-                pdf_path, "PDF", resolution=72.0, save_all=True,
-                append_images=images_to_save, optimize=True, quality=q
+                pdf_path, "PDF", resolution=150.0, save_all=True,
+                append_images=images_to_save, quality=q
             )
-            
+
             for img in images_to_save: img.close()
             first_image.close()
             gc.collect()
-            
-            for img in images_to_save: img.close()
-            first_image.close()
-            gc.collect()
-            
+
             if password:
                 self.apply_password(pdf_path, password)
-            
+
             return pdf_path
-         except Exception as e:
-             logger.error(f"PDF v2 failed: {e}")
-             return None
+        except Exception as e:
+            logger.error(f"PDF v2 failed: {e}")
+            return None
 
     async def download_cover(self, cover_url: str, output_path: Path, headers: dict = None) -> bool:
         if not cover_url:
