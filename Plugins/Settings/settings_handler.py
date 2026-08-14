@@ -95,13 +95,17 @@ async def settings_input_listener(client, message):
                 return
 
         elif state == "waiting_dump_channel":
+            cid = None
             try:
                 cid = int(message.text)
-                await Seishiro.set_config("dump_channel", cid)
-                await message.reply(get_styled_text(f"✅ Dump Channel Set: {cid}"), parse_mode=enums.ParseMode.HTML)
             except ValueError:
-                await message.reply("❌ invalid id.")
-                return
+                pass
+            if cid:
+                await Seishiro.settings_db.update_setting(message.from_user.id, "dump_channel_id", cid)
+                await message.reply("Dump Channel set successfully!")
+            else:
+                await message.reply("Invalid Channel ID.")
+            return
 
         elif state == "waiting_auc_id":
             try:

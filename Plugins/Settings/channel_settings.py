@@ -244,7 +244,8 @@ async def set_channel_cb(client, callback_query):
 
 @Client.on_callback_query(filters.regex("^(header_dump_channel|set_dump_channel_btn)$"))
 async def dump_channel_menu(client, callback_query):
-    dump_id = await Seishiro.get_config("dump_channel")
+    user_settings = await Seishiro.settings_db.get_settings(callback_query.from_user.id)
+    dump_id = user_settings.get("dump_channel_id")
     status = f"<code>{dump_id}</code>" if dump_id else "None"
     
     text = (
@@ -297,8 +298,8 @@ async def set_dump_input_cb(client, callback_query):
 
 @Client.on_callback_query(filters.regex("^rem_dump_channel$"))
 async def rem_dump_channel_cb(client, callback_query):
-    await Seishiro.set_config("dump_channel", None)
-    await callback_query.answer("Dump Channel Removed!", show_alert=True)
+    await Seishiro.settings_db.update_setting(callback_query.from_user.id, "dump_channel_id", None)
+    await callback_query.answer("Removed Dump Channel!", show_alert=True)
     await dump_channel_menu(client, callback_query)
 
 

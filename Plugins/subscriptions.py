@@ -132,7 +132,7 @@ async def add_sub_callback(client, callback_query):
             # Check global auto upload channels for match
             title_lower = info.get('title', 'Unknown').lower()
             upload_chan_id = None
-            aup_channels = await Seishiro.get_auto_upload_channels()
+            aup_channels = await Seishiro.get_auto_upload_channels(user_id)
             for chan in aup_channels:
                 c_title = chan.get('title', '').lower()
                 if not c_title: continue
