@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime
 from pyrogram.types import InputMediaPhoto, InputMediaDocument
 
@@ -101,13 +102,25 @@ class SubscriptionMonitor:
             images = await api.get_chapter_images(ch_id)
             if not images: return
             
+            from pathlib import Path
+            import tempfile
+            import shutil
+            
+            # Build a temp download dir inline (Downloader has no setup_chapter_dir)
+            safe_title = re.sub(r'[^\w\s-]', '', manga_title)[:50].strip()
+            safe_num = str(ch_num).replace('.', '_')
+            download_dir = Path(tempfile.mkdtemp(prefix=f"manga_{safe_title}_{safe_num}_"))
+            
             async with Downloader(Config) as downloader:
                 # Setup custom referer for protected CDNs (like ToonGod)
                 dl_referer = getattr(api, 'base_url', None) or getattr(api, '_base_url', None)
                 dl_headers = {'Referer': dl_referer.rstrip('/') + '/'} if dl_referer else None
                 
-                download_dir = await downloader.setup_chapter_dir(manga_title, ch_num)
-                success = await downloader.download_images(images, download_dir, headers=dl_headers)
+                # Create the 'images' subdir (download_images() expects this)
+                chapter_img_dir = download_dir / "images"
+                chapter_img_dir.mkdir(parents=True, exist_ok=True)
+                
+                success = await downloader.download_images(images, chapter_img_dir, headers=dl_headers)
                 if not success: return
                 
                 # For each user, check their settings and send
@@ -126,7 +139,7 @@ class SubscriptionMonitor:
                     
                     file_path = await asyncio.to_thread(
                         downloader.create_chapter_file,
-                        download_dir, 
+                        chapter_img_dir, 
                         manga_title, 
                         str(ch_num), 
                         "", # chapter_title
@@ -172,7 +185,6 @@ class SubscriptionMonitor:
                         # create_chapter_file actually re-uses the file if it already exists.
                         
                 # Cleanup the whole directory after all users are processed
-                import shutil
                 if download_dir.exists():
                     shutil.rmtree(download_dir, ignore_errors=True)
                     

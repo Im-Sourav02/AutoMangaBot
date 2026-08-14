@@ -193,11 +193,6 @@ class Downloader:
             logger.error(f"PDF creation failed: {e}")
             return None
 
-            return pdf_path
-        except Exception as e:
-            logger.error(f"PDF creation failed: {e}")
-            return None
-
     def create_cbz(self, chapter_dir: Path, manga_title: str, chapter_num: str, chapter_title: str, intro: Path = None, outro: Path = None, quality: int = None) -> Optional[Path]:
         try:
             base_name = f"{manga_title} - Ch {chapter_num}"

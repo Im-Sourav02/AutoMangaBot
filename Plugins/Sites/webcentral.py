@@ -65,8 +65,6 @@ class WebCentralAPI:
                                 chap_num = "0"
                                 full_title = text_content
                             
-                                full_title = text_content
-                            
                             chap_id_hash = hashlib.md5(full_url.encode()).hexdigest()
                             
                             if chap_id_hash not in seen_ids:

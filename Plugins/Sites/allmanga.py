@@ -180,8 +180,6 @@ class AllMangaAPI:
                                 chapter_num = match.group(1)
                                 break
                         
-                                break
-                        
                         chap_id_hash = hashlib.md5(chapter_url.encode()).hexdigest()
 
                         chapter_data = {
