@@ -4,7 +4,7 @@
 #Supoort group @rexbotschat
 
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import Config
 from Plugins.downloading import Downloader
 from Plugins.Sites.mangadex import MangaDexAPI
@@ -16,7 +16,6 @@ from Plugins.helper import (
     user_states, user_data,
     WAITING_CHAPTER_INPUT, WAITING_BATCH_NUMBER,
 )
-from Plugins.styled_keyboard import send_message_with_styled_keyboard, BUTTON_COLORS
 
 import logging
 import asyncio
@@ -482,8 +481,6 @@ async def chapters_list_cb(client, callback_query):
 
     # ── Bottom action row (guard 64-byte limit) ──
     user_settings  = await Seishiro.settings_db.get_settings(user_id)
-    # Store Web App FSM context so autobatch_webapp_handler can read it
-    user_data[user_id] = {"source": source, "manga_id": manga_id}
     autobat_cb = f"autobat_{source}_{manga_id}"
     dl_pg_cb   = f"dl_pg_{source}_{manga_id}_{offset}"
     dl_all_cb  = f"dl_all_{source}_{manga_id}"
@@ -499,10 +496,8 @@ async def chapters_list_cb(client, callback_query):
     dl_pg_cb   = _guard(dl_pg_cb,   f"dl_pg_{source}",  f"_{offset}")
     dl_all_cb  = _guard(dl_all_cb,  f"dl_all_{source}")
 
-    # ── Auto Batch Web App button (own row) ──
-    WEBVIEW_URL = "https://forwardbot-production-20df.up.railway.app/webview/autobatch"
     buttons.extend([
-        [InlineKeyboardButton("⚡ Auto Batch", web_app=WebAppInfo(url=WEBVIEW_URL))],
+        [InlineKeyboardButton("Auto Batch", callback_data=autobat_cb)],
         [
             InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb),
             InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb),
@@ -1089,41 +1084,6 @@ async def dl_ask_cb(client, callback_query):
 
 
 
-
-# Custom filter — pyrofork does not expose filters.web_app_data
-_web_app_data_filter = filters.create(lambda _, __, m: m.web_app_data is not None)
-
-@Client.on_message(_web_app_data_filter & filters.private)
-async def autobatch_webapp_handler(client, message):
-    """
-    Fires when the Auto Batch Mini App page sends 'autobatch_trigger'.
-    Reads the stored FSM context (source + manga_id) set when the chapter list
-    was displayed, sets WAITING_BATCH_NUMBER state, and asks for batch size.
-    """
-    if message.web_app_data.data != "autobatch_trigger":
-        return
-
-    user_id = message.from_user.id
-    ctx     = user_data.get(user_id, {})
-    source   = ctx.get("source", "")
-    manga_id = ctx.get("manga_id", "")
-
-    if not source or not manga_id:
-        await message.reply("❌ Session expired. Please open the chapter list again.")
-        return
-
-    # Set FSM state — same as autobatch_cb
-    user_states[user_id] = WAITING_BATCH_NUMBER
-
-    from pyrogram.types import ForceReply
-    await message.reply(
-        "<b>⚡ Auto Batch Mode</b>\n\n"
-        "Reply with the <b>number of chapters per batch</b>\n"
-        "<i>Example: 10 → combines Ch.1–10, Ch.11–20, …</i>\n\n"
-        "Send /cancel to abort.",
-        reply_markup=ForceReply(selective=True),
-        parse_mode=enums.ParseMode.HTML,
-    )
 
 
 AWAITING_BATCH = {}  # legacy; state now lives in user_states/user_data
