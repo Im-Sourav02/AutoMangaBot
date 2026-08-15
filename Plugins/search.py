@@ -1090,7 +1090,10 @@ async def dl_ask_cb(client, callback_query):
 
 
 
-@Client.on_message(filters.web_app_data & filters.private)
+# Custom filter — pyrofork does not expose filters.web_app_data
+_web_app_data_filter = filters.create(lambda _, __, m: m.web_app_data is not None)
+
+@Client.on_message(_web_app_data_filter & filters.private)
 async def autobatch_webapp_handler(client, message):
     """
     Fires when the Auto Batch Mini App page sends 'autobatch_trigger'.
