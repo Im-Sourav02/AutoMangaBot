@@ -4,7 +4,7 @@
 #Supoort group @rexbotschat
 
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from config import Config
 from Plugins.downloading import Downloader
 from Plugins.Sites.mangadex import MangaDexAPI
@@ -482,6 +482,8 @@ async def chapters_list_cb(client, callback_query):
 
     # ── Bottom action row (guard 64-byte limit) ──
     user_settings  = await Seishiro.settings_db.get_settings(user_id)
+    # Store Web App FSM context so autobatch_webapp_handler can read it
+    user_data[user_id] = {"source": source, "manga_id": manga_id}
     autobat_cb = f"autobat_{source}_{manga_id}"
     dl_pg_cb   = f"dl_pg_{source}_{manga_id}_{offset}"
     dl_all_cb  = f"dl_all_{source}_{manga_id}"
@@ -497,35 +499,27 @@ async def chapters_list_cb(client, callback_query):
     dl_pg_cb   = _guard(dl_pg_cb,   f"dl_pg_{source}",  f"_{offset}")
     dl_all_cb  = _guard(dl_all_cb,  f"dl_all_{source}")
 
-    dict_buttons = []
-    for row in buttons:
-        dict_row = []
-        for b in row:
-            dict_row.append({"text": b.text, "callback_data": b.callback_data})
-        dict_buttons.append(dict_row)
-
-    dict_buttons.extend([
-        [{"text": "Auto Batch", "callback_data": autobat_cb, "emoji_id": BUTTON_COLORS["primary"]}],
+    # ── Auto Batch Web App button (own row) ──
+    WEBVIEW_URL = "https://forwardbot-production-20df.up.railway.app/webview/autobatch"
+    buttons.extend([
+        [InlineKeyboardButton("⚡ Auto Batch", web_app=WebAppInfo(url=WEBVIEW_URL))],
         [
-            {"text": "⬆ FULL PAGE ⬆", "callback_data": dl_pg_cb},
-            {"text": "⬆ ALL CHAPTERS ⬆", "callback_data": dl_all_cb},
+            InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb),
+            InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb),
         ],
-        [{"text": sub_text, "callback_data": sub_cb}],
+        [InlineKeyboardButton(sub_text, callback_data=sub_cb)],
         [
-            {"text": "BACK", "callback_data": f"view_{source}_{manga_id}"},
-            {"text": "| CLOSE |", "callback_data": "stats_close"},
+            InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"),
+            InlineKeyboardButton("| CLOSE |", callback_data="stats_close"),
         ],
     ])
 
     caption_text = f"<b>Chapter Selection:</b>\nPage: {current_page}"
 
     try:
-        await callback_query.message.delete()
-        await send_message_with_styled_keyboard(
-            client=client,
-            chat_id=callback_query.message.chat.id,
-            text=caption_text,
-            button_layout=dict_buttons
+        await edit_msg_with_pic(
+            callback_query.message, caption_text,
+            InlineKeyboardMarkup(buttons), pic=cover_url
         )
     except Exception as e:
         logger.error(f"chapters_list_cb edit error: {e}", exc_info=True)
@@ -1095,6 +1089,38 @@ async def dl_ask_cb(client, callback_query):
 
 
 
+
+@Client.on_message(filters.web_app_data & filters.private)
+async def autobatch_webapp_handler(client, message):
+    """
+    Fires when the Auto Batch Mini App page sends 'autobatch_trigger'.
+    Reads the stored FSM context (source + manga_id) set when the chapter list
+    was displayed, sets WAITING_BATCH_NUMBER state, and asks for batch size.
+    """
+    if message.web_app_data.data != "autobatch_trigger":
+        return
+
+    user_id = message.from_user.id
+    ctx     = user_data.get(user_id, {})
+    source   = ctx.get("source", "")
+    manga_id = ctx.get("manga_id", "")
+
+    if not source or not manga_id:
+        await message.reply("❌ Session expired. Please open the chapter list again.")
+        return
+
+    # Set FSM state — same as autobatch_cb
+    user_states[user_id] = WAITING_BATCH_NUMBER
+
+    from pyrogram.types import ForceReply
+    await message.reply(
+        "<b>⚡ Auto Batch Mode</b>\n\n"
+        "Reply with the <b>number of chapters per batch</b>\n"
+        "<i>Example: 10 → combines Ch.1–10, Ch.11–20, …</i>\n\n"
+        "Send /cancel to abort.",
+        reply_markup=ForceReply(selective=True),
+        parse_mode=enums.ParseMode.HTML,
+    )
 
 
 AWAITING_BATCH = {}  # legacy; state now lives in user_states/user_data
