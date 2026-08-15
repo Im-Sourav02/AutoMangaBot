@@ -1032,14 +1032,14 @@ async def dl_ask_cb(client, callback_query):
     """
     data = callback_query.data  # e.g. "dl_ask_OmegaScans_12345|slug_42"
     try:
-        # Split into at most 4 parts from the left
-        _, source, rest = data.split("_", 2)
-        # token is the last segment, manga_id is everything before it
+        if data.startswith("dl_ask_"):
+            data = data[7:]
+        source, rest = data.split("_", 1)
         last_us = rest.rfind("_")
         manga_id = rest[:last_us]
         token    = int(rest[last_us + 1:])
     except Exception as parse_err:
-        logger.error(f"dl_ask_cb parse error: {parse_err} | data={data!r}")
+        logger.error(f"dl_ask_cb parse error: {parse_err} | data={callback_query.data!r}")
         await callback_query.answer("❌ Invalid data, please go back and retry.", show_alert=True)
         return
 
