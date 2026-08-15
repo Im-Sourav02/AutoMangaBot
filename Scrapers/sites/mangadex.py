@@ -12,25 +12,16 @@ from typing import List, Dict, Optional
 logger = logging.getLogger(__name__)
 
 class MangaDexAPI:
-    API_BASE = "https://api.mangadex.org"   # canonical — never touches the DOM
-
     def __init__(self, Config):
         self.Config = Config
-        self.rate_limit_delay = 0.35        # MangaDex asks for ~5 req/s max
+        self.rate_limit_delay = 0.5
         self.session = None
 
     async def __aenter__(self):
-        timeout = aiohttp.ClientTimeout(total=60, connect=15)
+        timeout = aiohttp.ClientTimeout(total=60, connect=30)
         self.session = aiohttp.ClientSession(
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
-            },
-            timeout=timeout,
+            headers={'User-Agent': 'Mozilla/5.0'},
+            timeout=timeout
         )
         return self
 
@@ -41,33 +32,25 @@ class MangaDexAPI:
 
     async def api_request(self, endpoint: str, params: dict = None, retries: int = 3) -> Optional[dict]:
         if not self.session:
-            self.session = aiohttp.ClientSession(
-                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-            )
-
+             self.session = aiohttp.ClientSession(headers={'User-Agent': 'Mozilla/5.0'})
+             
         for attempt in range(retries):
             try:
                 await asyncio.sleep(self.rate_limit_delay)
-                url = f"{self.API_BASE}{endpoint}"
+                url = f"{self.Config.API_BASE}{endpoint}"
                 async with self.session.get(url, params=params) as response:
                     if response.status == 429:
-                        wait = int(response.headers.get("Retry-After", 5))
-                        logger.warning(f"MangaDex rate-limited, waiting {wait}s")
+                        wait = int(response.headers.get('Retry-After', 5))
+                        logger.warning(f"Rate limited, waiting {wait}s")
                         await asyncio.sleep(wait)
-                        continue
-                    if response.status == 503:
-                        await asyncio.sleep(3 * (attempt + 1))
                         continue
                     response.raise_for_status()
                     return await response.json()
-            except aiohttp.ClientResponseError as e:
-                logger.error(f"MangaDex API HTTP error (attempt {attempt + 1}): {e.status} {endpoint}")
             except Exception as e:
-                logger.error(f"MangaDex API request failed (attempt {attempt + 1}): {e}")
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
+                logger.error(f"API request failed (attempt {attempt + 1}): {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(2 ** attempt)
         return None
-
 
     async def get_manga_info(self, manga_id: str) -> Optional[Dict]:
         try:
@@ -240,35 +223,17 @@ class MangaDexAPI:
             return None
 
     async def get_chapter_images(self, chapter_id: str) -> Optional[List[str]]:
-        """
-        Resolves chapter images via the MangaDex@Home node assignment endpoint.
-        Uses full-quality /data/ URLs; falls back to /data-saver/ if the
-        at-home server returns no full-quality files.
-        """
         try:
             data = await self.api_request(f'/at-home/server/{chapter_id}')
             if not data or data.get('result') != 'ok':
-                logger.warning(f"MangaDex at-home failed for {chapter_id}: {data}")
                 return None
-
-            base_url     = data['baseUrl']
+            base_url = data['baseUrl']
             chapter_hash = data['chapter']['hash']
-            # Prefer full quality; fall back to data-saver (smaller WebP)
-            filenames    = data['chapter'].get('data') or data['chapter'].get('dataSaver') or []
-
-            if not filenames:
-                logger.warning(f"MangaDex: no image filenames in at-home response for {chapter_id}")
-                return None
-
-            # Determine quality tier prefix
-            quality = "data" if data['chapter'].get('data') else "data-saver"
-            urls = [f"{base_url}/{quality}/{chapter_hash}/{fname}" for fname in filenames]
-            logger.info(f"MangaDex: {len(urls)} images resolved via at-home ({quality}) for {chapter_id}")
-            return urls
+            filenames = data['chapter']['data']
+            return [f"{base_url}/data/{chapter_hash}/{fname}" for fname in filenames]
         except Exception as e:
-            logger.error(f"MangaDex get_chapter_images failed: {e}")
+            logger.error(f"Failed to get images: {e}")
             return None
-
 
 
 # CantarellaBots

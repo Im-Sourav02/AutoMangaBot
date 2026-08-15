@@ -6,12 +6,11 @@
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import Config
-from Plugins.downloading import Downloader
-from Plugins.Sites.mangadex import MangaDexAPI
-from Plugins.Sites.mangaforest import MangaForestAPI
+from Services.downloader import Downloader
+from Scrapers import SITES, get_api_class  # Central registry lives in Scrapers/__init__.py
 from Database.database import Seishiro
 from Database.subscriptions import SubscriptionDB
-from Plugins.helper import edit_msg_with_pic, get_styled_text, user_states, user_data, WAITING_CHAPTER_INPUT
+from Utils.helper import edit_msg_with_pic, get_styled_text, user_states, user_data, WAITING_CHAPTER_INPUT
 import logging
 import asyncio
 import difflib
@@ -21,83 +20,6 @@ import os
 import re
 
 logger = logging.getLogger(__name__)
-
-from Plugins.Sites.mangakakalot import MangakakalotAPI
-from Plugins.Sites.allmanga import AllMangaAPI
-from Plugins.Sites.comick import ComickAPI
-from Plugins.Sites.atsumaru import AtsumaruAPI
-from Plugins.Sites.omegascans import OmegaScansAPI
-from Plugins.Sites.theblank import TheBlankAPI
-# Madara-based
-from Plugins.Sites.toonily import ToonilyAPI
-from Plugins.Sites.manhwaread import ManhwaReadAPI
-from Plugins.Sites.weebtoon import WebtoonScanAPI
-from Plugins.Sites.hentai20 import Hentai20API
-from Plugins.Sites.manga18fx import Manga18fxAPI
-from Plugins.Sites.manga18club import Manga18clubAPI
-from Plugins.Sites.manhwa18 import Manhwa18API
-from Plugins.Sites.manhwaclub import ManhwaClubAPI
-from Plugins.Sites.manhwahub import ManhwaHubAPI
-from Plugins.Sites.manytoon import ManyToonAPI
-from Plugins.Sites.hiperdex import HiperdexAPI
-from Plugins.Sites.mangaforfree import MangaForFreeAPI
-from Plugins.Sites.mangadistrict import MangaDistrictAPI
-# Custom scrapers
-from Plugins.Sites.manganato import MangaNatoAPI
-from Plugins.Sites.asurascans import AsuraScansAPI
-from Plugins.Sites.vortexscans import VortexScansAPI
-from Plugins.Sites.toongod import ToonGodAPI
-from Plugins.Sites.hivetoons import HiveToonsAPI
-
-SITES = {
-    # Original sources
-    "MangaDex": MangaDexAPI,
-    "MangaForest": MangaForestAPI,
-    "Mangakakalot": MangakakalotAPI,
-    "AllManga": AllMangaAPI,
-    "Comick": ComickAPI,
-    "Atsumaru": AtsumaruAPI,
-    "OmegaScans": OmegaScansAPI,
-    "TheBlank": TheBlankAPI,
-    "WebCentral": None,
-    # Madara-based sources
-    "Toonily": ToonilyAPI,
-    "ManhwaRead": ManhwaReadAPI,
-    # WebtoonScan removed — domain dead
-    "Hentai20": Hentai20API,
-    "Manga18fx": Manga18fxAPI,
-    "Manga18Club": Manga18clubAPI,
-    "Manhwa18": Manhwa18API,
-    "ManhwaClub": ManhwaClubAPI,
-    "ManhwaHub": ManhwaHubAPI,
-    "ManyToon": ManyToonAPI,
-    "Hiperdex": HiperdexAPI,
-    "MangaForFree": MangaForFreeAPI,
-    "MangaDistrict": MangaDistrictAPI,
-    # Custom scrapers
-    "MangaNato": MangaNatoAPI,
-    "AsuraScans": AsuraScansAPI,
-    "VortexScans": VortexScansAPI,
-    "ToonGod": ToonGodAPI,
-    "HiveToons": HiveToonsAPI,
-}
-
-try:
-    from Plugins.Sites.webcentral import WebCentralAPI
-    SITES["WebCentral"] = WebCentralAPI
-except ImportError:
-    pass
-
-def get_api_class(source):
-    # Try exact match first, then case-insensitive
-    cls = SITES.get(source)
-    if cls is not None:
-        return cls
-    for key, val in SITES.items():
-        if key.lower() == source.lower():
-            return val
-    return None
-
 
 def check_search_state(_, __, m):
     if m.text and m.text.startswith('/'):
@@ -567,22 +489,18 @@ async def custom_dl_input_handler(client, message):
     to_download.sort(key=lambda x: float(x['chapter']))
     
     if combine_mode and len(to_download) > 1:
-        from Plugins.task_manager import task_manager
-        pos = await task_manager.add_task(user_id, message.chat.id, execute_download_combined, client, message.chat.id, source, manga_id, to_download, user_id)
-        await status_msg.edit_text(f"✅ Added {len(to_download)} chapters (combined) to queue. Position: {pos}")
+        await execute_download_combined(client, message.chat.id, source, manga_id, to_download, user_id)
     else:
-        from Plugins.task_manager import task_manager
         for ch in to_download:
-            import Plugins.helper as helper
+            import Utils.helper as helper
             if helper.CANCEL_TASKS.get(message.chat.id, False):
                 helper.CANCEL_TASKS[message.chat.id] = False
                 break
-            await task_manager.add_task(user_id, message.chat.id, execute_download, client, message.chat.id, source, manga_id, ch['id'], user_id)
-        await status_msg.edit_text(f"✅ Added {len(to_download)} chapters to queue.")
+            await execute_download(client, message.chat.id, source, manga_id, ch['id'], user_id)
 
 
 async def execute_download_combined(client, target_chat_id, source, manga_id, chapters_to_download, user_id):
-    import Plugins.helper as helper
+    import Utils.helper as helper
     import shutil
     import asyncio
     import re
@@ -590,7 +508,7 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
     import difflib
     from pyrogram import enums
     from config import Config
-    from Plugins.downloading import Downloader
+    from Services.downloader import Downloader
 
     from Database.database import Seishiro
     
@@ -981,10 +899,7 @@ async def dl_ask_cb(client, callback_query):
     db_channel = await Seishiro.get_default_channel()
     channel_id = int(db_channel) if db_channel else callback_query.message.chat.id
     
-    from Plugins.task_manager import task_manager
-    user_id = callback_query.from_user.id
-    pos = await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id)
-    await callback_query.message.reply(f"✅ Added chapter to queue. Position: {pos}")
+    await execute_download(client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id)
 
 
 
@@ -1030,13 +945,11 @@ async def dl_full_page_cb(client, callback_query):
         return
         
     for ch in reversed(chapters):
-        import Plugins.helper as helper
+        import Utils.helper as helper
         if helper.CANCEL_TASKS.get(callback_query.message.chat.id, False):
             helper.CANCEL_TASKS[callback_query.message.chat.id] = False
             break
-        from Plugins.task_manager import task_manager
-        await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, callback_query.message.chat.id, source, manga_id, ch['id'], user_id)
-    await callback_query.message.reply(f"✅ Added {len(chapters)} chapters to queue.")
+        await execute_download(client, callback_query.message.chat.id, source, manga_id, ch['id'], user_id)
 
 
 @Client.on_callback_query(filters.regex("^dl_all_"))
@@ -1071,10 +984,8 @@ async def dl_all_chapters_cb(client, callback_query):
     all_chapters.sort(key=lambda x: float(x['chapter']))
     
     for ch in all_chapters:
-        import Plugins.helper as helper
+        import Utils.helper as helper
         if helper.CANCEL_TASKS.get(callback_query.message.chat.id, False):
             helper.CANCEL_TASKS[callback_query.message.chat.id] = False
             break
-        from Plugins.task_manager import task_manager
-        await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, callback_query.message.chat.id, source, manga_id, ch['id'], user_id)
-    await status_msg.edit_text(f"✅ Added {len(all_chapters)} chapters to queue.")
+        await execute_download(client, callback_query.message.chat.id, source, manga_id, ch['id'], user_id)
