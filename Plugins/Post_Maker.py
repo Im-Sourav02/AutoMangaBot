@@ -12,7 +12,7 @@ def encode_payload(string):
     return base64.urlsafe_b64encode(string.encode("utf-8")).decode("utf-8").rstrip("=")
 
 @Client.on_message(filters.command("makepost"))
-async def create_post(Client: Client, Message: Message):
+async def create_post(client: Client, message: Message):
     if message.from_user.id != Config.USER_ID:
         return
 
