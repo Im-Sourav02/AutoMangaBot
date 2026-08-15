@@ -27,7 +27,7 @@ from Plugins.Sites.allmanga import AllMangaAPI
 from Plugins.Sites.comick import ComickAPI
 from Plugins.Sites.atsumaru import AtsumaruAPI
 from Plugins.Sites.omegascans import OmegaScansAPI
-from Plugins.Sites.theblank import TheBlankAPI
+
 # Madara-based
 from Plugins.Sites.toonily import ToonilyAPI
 from Plugins.Sites.manhwaread import ManhwaReadAPI
@@ -36,7 +36,7 @@ from Plugins.Sites.hentai20 import Hentai20API
 from Plugins.Sites.manga18fx import Manga18fxAPI
 from Plugins.Sites.manga18club import Manga18clubAPI
 from Plugins.Sites.manhwa18 import Manhwa18API
-from Plugins.Sites.manhwaclub import ManhwaClubAPI
+
 from Plugins.Sites.manhwahub import ManhwaHubAPI
 from Plugins.Sites.manytoon import ManyToonAPI
 from Plugins.Sites.hiperdex import HiperdexAPI
@@ -58,7 +58,7 @@ SITES = {
     "Comick": ComickAPI,
     "Atsumaru": AtsumaruAPI,
     "OmegaScans": OmegaScansAPI,
-    "TheBlank": TheBlankAPI,
+
     "WebCentral": None,
     # Madara-based sources
     "Toonily": ToonilyAPI,
@@ -68,7 +68,7 @@ SITES = {
     "Manga18fx": Manga18fxAPI,
     "Manga18Club": Manga18clubAPI,
     "Manhwa18": Manhwa18API,
-    "ManhwaClub": ManhwaClubAPI,
+
     "ManhwaHub": ManhwaHubAPI,
     "ManyToon": ManyToonAPI,
     "Hiperdex": HiperdexAPI,
@@ -424,19 +424,19 @@ async def chapters_list_cb(client, callback_query):
     user_settings = await Seishiro.settings_db.get_settings(user_id)
     current_format = user_settings.get("file_type", "PDF")
     
-    tgl_cb = f"tgl_fmt_{source}_{manga_id}_{offset}"
+    autobat_cb = f"autobat_{source}_{manga_id}"
     dl_pg_cb = f"dl_pg_{source}_{manga_id}_{offset}"
     dl_all_cb = f"dl_all_{source}_{manga_id}"
     
     # Guard 64-byte limit
-    if len(tgl_cb.encode('utf-8')) > 64:
-        short_id = manga_id[:62 - len(source) - len(str(offset)) - 10]
-        tgl_cb = f"tgl_fmt_{source}_{short_id}_{offset}"
+    if len(autobat_cb.encode('utf-8')) > 64:
+        short_id = manga_id[:62 - len(source) - 10]
+        autobat_cb = f"autobat_{source}_{short_id}"
         dl_pg_cb = f"dl_pg_{source}_{short_id}_{offset}"
         dl_all_cb = f"dl_all_{source}_{short_id}"
         
     buttons.extend([
-        [InlineKeyboardButton(f"Single {current_format}", callback_data=tgl_cb)],
+        [InlineKeyboardButton("🟦 𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 🟦", callback_data=autobat_cb)],
         [InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb), InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb)],
         [InlineKeyboardButton(sub_text, callback_data=sub_cb)],
         [InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"), InlineKeyboardButton("| CLOSE |", callback_data="stats_close")]
@@ -595,7 +595,7 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
     from Database.database import Seishiro
     
     status_chat_id = target_chat_id
-    status_msg = await client.send_message(status_chat_id, f"<i>⏳ Initializing combined download for {len(chapters_to_download)} chapters...</i>", parse_mode=enums.ParseMode.HTML)
+    status_msg = await client.send_message(status_chat_id, f"<i>⏳ 𝘐𝘯𝘪𝘵𝘪𝘢𝘭𝘪𝘻𝘪𝘯𝘨 𝘊𝘰𝘮𝘣𝘪𝘯𝘦𝘥 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘧𝘰𝘳 {len(chapters_to_download)} 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴...</i>", parse_mode=enums.ParseMode.HTML)
     
     try:
         API = get_api_class(source)
@@ -610,14 +610,14 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
             for ch in chapters_to_download:
                 if helper.CANCEL_TASKS.get(target_chat_id, False):
                     helper.CANCEL_TASKS[target_chat_id] = False
-                    await status_msg.edit_text("❌ Download cancelled.")
+                    await status_msg.edit_text("❌ 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘊𝘢𝘯𝘤𝘦𝘭𝘭𝘦𝘥.")
                     return
                 images = await api.get_chapter_images(ch['id'])
                 if images:
                     all_images.extend(images)
                 
         if not all_images:
-            await status_msg.edit_text(f"❌ no images found in the selected chapters.")
+            await status_msg.edit_text(f"❌ 𝘕𝘰 𝘐𝘮𝘢𝘨𝘦𝘴 𝘍𝘰𝘶𝘯𝘥 𝘪𝘯 𝘵𝘩𝘦 𝘚𝘦𝘭𝘦𝘤𝘵𝘦𝘥 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴.")
             return
             
         safe_manga_id = re.sub(r'[\\/:*?"<>|]', '_', manga_id)
@@ -631,10 +631,10 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
             dl_referer = getattr(api, 'base_url', None) or getattr(api, '_base_url', None)
             dl_headers = {'Referer': dl_referer.rstrip('/') + '/'} if dl_referer else None
             if not await downloader.download_images(all_images, chapter_dir, headers=dl_headers):
-                 await status_msg.edit_text("❌ download failed.")
+                 await status_msg.edit_text("❌ 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘍𝘢𝘪𝘭𝘦𝘥.")
                  return
             
-            await status_msg.edit_text(f"<i>⚙️ processing file...</i>", parse_mode=enums.ParseMode.HTML)
+            await status_msg.edit_text(f"<i>𝘗𝘳𝘰𝘤𝘦𝘴𝘴𝘪𝘯𝘨 𝘍𝘪𝘭𝘦𝘴...</i>", parse_mode=enums.ParseMode.HTML)
             
             user_settings = await Seishiro.settings_db.get_settings(user_id)
             file_type = user_settings.get("file_type", "PDF")
@@ -663,10 +663,10 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
             if outro_p and outro_p.exists(): outro_p.unlink()
             
             if not final_path:
-                 await status_msg.edit_text("❌ failed to create file.")
+                 await status_msg.edit_text("❌ 𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘊𝘳𝘦𝘢𝘵𝘦 𝘍𝘪𝘭𝘦.")
                  return
             
-            await status_msg.edit_text(f"<i>⬆ uploading...</i>", parse_mode=enums.ParseMode.HTML)
+            await status_msg.edit_text(f"<i>𝘜𝘱𝘭𝘰𝘢𝘥𝘪𝘯𝘨...</i>", parse_mode=enums.ParseMode.HTML)
             
             filename_format = await Seishiro.get_format()
             formatted_filename = filename_format \
@@ -735,11 +735,11 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
                         else:
                             await client.send_document(auto_upload_id, final_path, caption=caption)
                     except Exception as e:
-                        logger.error(f"Failed to send to auto upload channel {auto_upload_id}: {e}")
+                        logger.error(f"𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘚𝘦𝘯𝘥 𝘵𝘰 𝘈𝘶𝘵𝘰 𝘜𝘱𝘭𝘰𝘢𝘥 𝘊𝘩𝘢𝘯𝘯𝘦𝘭 {auto_upload_id}: {e}")
                 
             except Exception as e:
-                logger.error(f"Upload failed: {e}")
-                try: await status_msg.edit_text("❌ failed to upload file.")
+                logger.error(f"𝘜𝘱𝘭𝘰𝘢𝘥 𝘍𝘢𝘪𝘭𝘦𝘥: {e}")
+                try: await status_msg.edit_text("❌ 𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘜𝘱𝘭𝘰𝘢𝘥 𝘍𝘪𝘭𝘦.")
                 except Exception: pass
             
             if thumb_path and Path(thumb_path).exists():
@@ -752,7 +752,7 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
 
     except Exception as e:
         logger.error(f"DL Error: {e}", exc_info=True)
-        try: await status_msg.edit_text(f"❌ Error: {e}")
+        try: await status_msg.edit_text(f"𝘌𝘳𝘳𝘰𝘳: {e}")
         except Exception: pass
 
 async def execute_download(client, target_chat_id, source, manga_id, chapter_id, user_id, status_chat_id=None):
@@ -762,14 +762,14 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
     """
     if not status_chat_id: status_chat_id = target_chat_id
     
-    status_msg = await client.send_message(status_chat_id, "<i>⏳ Initializing download...</i>", parse_mode=enums.ParseMode.HTML)
+    status_msg = await client.send_message(status_chat_id, "<i>𝘐𝘯𝘪𝘵𝘪𝘢𝘭𝘪𝘻𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥...</i>", parse_mode=enums.ParseMode.HTML)
     
     try:
         API = get_api_class(source)
         async with API(Config) as api:
             meta = await api.get_chapter_info(chapter_id)
             if not meta:
-                await status_msg.edit_text("❌ failed to get chapter info.")
+                await status_msg.edit_text("𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘎𝘦𝘵 𝘊𝘩𝘢𝘱𝘵𝘦𝘳 𝘐𝘯𝘧𝘰.")
                 return
             
             if not meta.get('manga_title'):
@@ -779,7 +779,7 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
             images = await api.get_chapter_images(chapter_id)
             
         if not images:
-            await status_msg.edit_text(f"❌ no images in chapter {meta.get('chapter', '?')}")
+            await status_msg.edit_text(f"❌ 𝘕𝘰 𝘐𝘮𝘢𝘨𝘦𝘴 𝘪𝘯 𝘵𝘩𝘪𝘴 𝘊𝘩𝘢𝘱𝘵𝘦𝘳 {meta.get('chapter', '?')}")
             return
             
         # Sanitize manga_id for use in directory names (Windows forbids | : * ? " < > \)
@@ -787,17 +787,17 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
         chapter_dir = Path(Config.DOWNLOAD_DIR) / f"{source}_{safe_manga_id}" / f"ch_{meta['chapter']}"
         chapter_dir.mkdir(parents=True, exist_ok=True)
         
-        await status_msg.edit_text(f"<i>⬇ downloading {len(images)} pages...</i>", parse_mode=enums.ParseMode.HTML)
+        await status_msg.edit_text(f"<i>𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥𝘪𝘯𝘨 ⬇  {len(images)} 𝘱𝘢𝘨𝘦𝘴...</i>", parse_mode=enums.ParseMode.HTML)
         
         async with Downloader(Config) as downloader:
             # Pass the source site as Referer so hotlink-protected CDNs accept the request
             dl_referer = getattr(api, 'base_url', None) or getattr(api, '_base_url', None)
             dl_headers = {'Referer': dl_referer.rstrip('/') + '/'} if dl_referer else None
             if not await downloader.download_images(images, chapter_dir, headers=dl_headers):
-                 await status_msg.edit_text("❌ download failed.")
+                 await status_msg.edit_text("𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘍𝘢𝘪𝘭𝘦𝘥.")
                  return
             
-            await status_msg.edit_text("<i>⚙️ processing pdf...</i>", parse_mode=enums.ParseMode.HTML)
+            await status_msg.edit_text("<i>⚙️ 𝘗𝘳𝘰𝘤𝘦𝘴𝘴𝘪𝘯𝘨 𝘗𝘋𝘍...</i>", parse_mode=enums.ParseMode.HTML)
             
             user_settings = await Seishiro.settings_db.get_settings(user_id)
             file_type = user_settings.get("file_type", "PDF")
@@ -826,10 +826,10 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
             if outro_p and outro_p.exists(): outro_p.unlink()
             
             if not final_path:
-                 await status_msg.edit_text("❌ failed to create file.")
+                 await status_msg.edit_text("𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘊𝘳𝘦𝘢𝘵𝘦 𝘍𝘪𝘭𝘦.")
                  return
             
-            await status_msg.edit_text(f"<i>⬆ uploading...</i>", parse_mode=enums.ParseMode.HTML)
+            await status_msg.edit_text(f"<i>𝘜𝘱𝘭𝘰𝘢𝘥𝘪𝘯𝘨...⬆ </i>", parse_mode=enums.ParseMode.HTML)
             
             manga_title = meta['manga_title']
             chapter_num = meta['chapter']
@@ -948,12 +948,12 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                         else:
                             await client.send_document(auto_upload_id, final_path, caption=caption)
                     except Exception as e:
-                        logger.error(f"Failed to send to auto upload channel {auto_upload_id}: {e}")
+                        logger.error(f"❌ 𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘚𝘦𝘯𝘥 𝘵𝘰 𝘈𝘶𝘵𝘰 𝘜𝘱𝘭𝘰𝘢𝘥 𝘊𝘩𝘢𝘯𝘯𝘦𝘭 {auto_upload_id}: {e}")
                 
                 # Do NOT send to user PM if dump_channel is set (requested by user)
             except Exception as e:
                 logger.error(f"Upload failed: {e}")
-                try: await status_msg.edit_text("❌ failed to upload file.")
+                try: await status_msg.edit_text("❌ 𝘍𝘢𝘪𝘭𝘦𝘥 𝘵𝘰 𝘜𝘱𝘭𝘰𝘢𝘥 𝘍𝘪𝘭𝘦.")
                 except Exception: pass
             
             if thumb_path and Path(thumb_path).exists():
@@ -966,7 +966,7 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
 
     except Exception as e:
         logger.error(f"DL Error: {e}", exc_info=True)
-        try: await status_msg.edit_text(f"❌ Error: {e}")
+        try: await status_msg.edit_text(f"❌ 𝘌𝘳𝘳𝘰𝘳: {e}")
         except Exception: pass
 
 
@@ -978,7 +978,7 @@ async def dl_ask_cb(client, callback_query):
     chapter_id = "_".join(data[4:])
     
     try:
-        await callback_query.answer("Starting download...", show_alert=False)
+        await callback_query.answer("𝘚𝘵𝘢𝘳𝘵𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥...", show_alert=False)
     except Exception:
         pass
         
@@ -988,32 +988,104 @@ async def dl_ask_cb(client, callback_query):
     from Plugins.task_manager import task_manager
     user_id = callback_query.from_user.id
     pos = await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id)
-    await callback_query.message.reply(f"✅ Added chapter to queue. Position: {pos}")
+    await callback_query.message.reply(f"✅ 𝘈𝘥𝘥𝘦𝘥 𝘤𝘩𝘢𝘱𝘵𝘦𝘳 𝘵𝘰 𝘘𝘶𝘦𝘶𝘦. 𝘗𝘰𝘴𝘪𝘵𝘪𝘰𝘯: {pos}")
 
 
 
-# CantarellaBots
-# Don't Remove Credit
-# Telegram Channel @CantarellaBots
-#Supoort group @rexbotschat
-@Client.on_callback_query(filters.regex("^tgl_fmt_"))
-async def toggle_format_cb(client, callback_query):
+AWAITING_BATCH = {}
+
+@Client.on_callback_query(filters.regex("^autobat_"))
+async def autobatch_cb(client, callback_query):
     parts = callback_query.data.split("_")
-    source = parts[2]
-    offset = parts[-1]
-    manga_id = "_".join(parts[3:-1])
-    
+    source = parts[1]
+    manga_id = "_".join(parts[2:])
     user_id = callback_query.from_user.id
-    user_settings = await Seishiro.settings_db.get_settings(user_id)
-    current_format = user_settings.get("file_type", "PDF")
-    new_format = "CBZ" if current_format == "PDF" else "PDF"
     
-    await Seishiro.settings_db.update_setting(user_id, "file_type", new_format)
-    await callback_query.answer(f"Format changed to Single {new_format}!", show_alert=False)
+    AWAITING_BATCH[user_id] = {'source': source, 'manga_id': manga_id}
     
-    # Refresh the menu to show the new button text
-    callback_query.data = f"chapters_{source}_{manga_id}_{offset}"
-    await chapters_list_cb(client, callback_query)
+    await callback_query.answer("Auto Batch Selected", show_alert=False)
+    
+    from pyrogram.types import ForceReply
+    await callback_query.message.reply(
+        "🟦 <b>𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 𝗠𝗼𝗱𝗲</b>\n\n"
+        "Please reply to this message with the number of chapters per batch (e.g. 10)\n"
+        "<i>Or send /cancel to abort.</i>",
+        reply_markup=ForceReply(selective=True)
+    )
+
+@Client.on_message(filters.reply & filters.text & filters.private)
+async def autobatch_reply_handler(client, message):
+    user_id = message.from_user.id
+    if user_id not in AWAITING_BATCH:
+        return
+        
+    if not message.reply_to_message or "𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 𝗠𝗼𝗱𝗲" not in message.reply_to_message.text:
+        return
+        
+    if message.text.lower() == "/cancel":
+        del AWAITING_BATCH[user_id]
+        await message.reply("❌ Auto Batch cancelled.")
+        return
+        
+    try:
+        batch_size = int(message.text.strip())
+        if batch_size <= 0: raise ValueError
+    except ValueError:
+        await message.reply("❌ Please reply with a valid positive number.")
+        return
+        
+    state = AWAITING_BATCH.pop(user_id)
+    source = state['source']
+    manga_id = state['manga_id']
+    
+    status_msg = await message.reply(f"<i>⏳ 𝘍𝘦𝘵𝘤𝘩𝘪𝘯𝘨 𝘈𝘭𝘭 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴...</i>", parse_mode=enums.ParseMode.HTML)
+    
+    API = get_api_class(source)
+    all_chapters = []
+    
+    async with API(Config) as api:
+        c_offset = 0
+        while True:
+            batch = await api.get_manga_chapters(manga_id, limit=100, offset=c_offset)
+            if not batch: break
+            all_chapters.extend(batch)
+            if len(batch) < 100: break
+            c_offset += 100
+            
+    if not all_chapters:
+        await status_msg.edit_text("❌ 𝘕𝘰 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘍𝘰𝘶𝘯𝘥.")
+        return
+        
+    all_chapters.sort(key=lambda x: float(x['chapter']))
+    
+    chunks = []
+    singles = []
+    
+    for i in range(0, len(all_chapters), batch_size):
+        chunk = all_chapters[i:i + batch_size]
+        if len(chunk) == batch_size:
+            chunks.append(chunk)
+        else:
+            singles.extend(chunk)
+            
+    await status_msg.edit_text(f"✅ 𝘍𝘰𝘶𝘯𝘥 {len(all_chapters)} 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴. 𝘘𝘶𝘦𝘶𝘦𝘪𝘯𝘨 {len(chunks)} 𝘉𝘢𝘵𝘤𝘩𝘦𝘴 𝘢𝘯𝘥 {len(singles)} 𝘚𝘪𝘯𝘨𝘭𝘦𝘴...")
+    
+    from Plugins.task_manager import task_manager
+    import Plugins.helper as helper
+    
+    for chunk in chunks:
+        if helper.CANCEL_TASKS.get(message.chat.id, False):
+            helper.CANCEL_TASKS[message.chat.id] = False
+            break
+        await task_manager.add_task(user_id, message.chat.id, execute_download_combined, client, message.chat.id, source, manga_id, chunk, user_id)
+        
+    for ch in singles:
+        if helper.CANCEL_TASKS.get(message.chat.id, False):
+            helper.CANCEL_TASKS[message.chat.id] = False
+            break
+        await task_manager.add_task(user_id, message.chat.id, execute_download, client, message.chat.id, source, manga_id, ch['id'], user_id)
+        
+    await status_msg.edit_text(f"✅ 𝘈𝘥𝘥𝘦𝘥 𝘢𝘭𝘭 {len(all_chapters)} 𝘤𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘵𝘰 𝘘𝘶𝘦𝘶𝘦.")
 
 
 @Client.on_callback_query(filters.regex("^dl_pg_"))
@@ -1024,7 +1096,7 @@ async def dl_full_page_cb(client, callback_query):
     manga_id = "_".join(parts[3:-1])
     user_id = callback_query.from_user.id
     
-    await callback_query.answer("Starting download for this page...", show_alert=False)
+    await callback_query.answer("𝘚𝘵𝘢𝘳𝘵𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘧𝘰𝘳 𝘛𝘩𝘪𝘴 𝘱𝘢𝘨𝘦...", show_alert=False)
     
     API = get_api_class(source)
     async with API(Config) as api:
@@ -1050,12 +1122,12 @@ async def dl_all_chapters_cb(client, callback_query):
     manga_id = "_".join(parts[3:])
     user_id = callback_query.from_user.id
     
-    await callback_query.answer("Starting download for ALL chapters...", show_alert=True)
+    await callback_query.answer("𝘚𝘵𝘢𝘳𝘵𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥 𝘧𝘰𝘳 𝘈𝘓𝘓 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴...", show_alert=True)
     
     API = get_api_class(source)
     all_chapters = []
     
-    status_msg = await callback_query.message.reply("<i>⏳ fetching all chapters...</i>", parse_mode=enums.ParseMode.HTML)
+    status_msg = await callback_query.message.reply("<i>⏳ 𝘍𝘦𝘵𝘤𝘩𝘪𝘯𝘨 𝘈𝘭𝘭 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴...</i>", parse_mode=enums.ParseMode.HTML)
     
     async with API(Config) as api:
         c_offset = 0
@@ -1067,10 +1139,10 @@ async def dl_all_chapters_cb(client, callback_query):
             c_offset += 100
             
     if not all_chapters:
-        await status_msg.edit_text("❌ no chapters found.")
+        await status_msg.edit_text("❌ 𝘕𝘰 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘍𝘰𝘶𝘯𝘥.")
         return
         
-    await status_msg.edit_text(f"✅ Found {len(all_chapters)} chapters. Queueing downloads...")
+    await status_msg.edit_text(f"✅ 𝘍𝘰𝘶𝘯𝘥 {len(all_chapters)} 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴. 𝘘𝘶𝘦𝘶𝘦𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥𝘴...")
     
     all_chapters.sort(key=lambda x: float(x['chapter']))
     
@@ -1081,4 +1153,4 @@ async def dl_all_chapters_cb(client, callback_query):
             break
         from Plugins.task_manager import task_manager
         await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, callback_query.message.chat.id, source, manga_id, ch['id'], user_id)
-    await status_msg.edit_text(f"✅ Added {len(all_chapters)} chapters to queue.")
+    await status_msg.edit_text(f"✅ 𝘈𝘥𝘥𝘦𝘥 {len(all_chapters)} 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘵𝘰 𝘘𝘶𝘦𝘶𝘦.")

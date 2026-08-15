@@ -11,14 +11,14 @@ from Scrapers.sites.allmanga import AllMangaAPI
 from Scrapers.sites.comick import ComickAPI
 from Scrapers.sites.atsumaru import AtsumaruAPI
 from Scrapers.sites.omegascans import OmegaScansAPI
-from Scrapers.sites.theblank import TheBlankAPI
+
 from Scrapers.sites.toonily import ToonilyAPI
 from Scrapers.sites.manhwaread import ManhwaReadAPI
 from Scrapers.sites.hentai20 import Hentai20API
 from Scrapers.sites.manga18fx import Manga18fxAPI
 from Scrapers.sites.manga18club import Manga18clubAPI
 from Scrapers.sites.manhwa18 import Manhwa18API
-from Scrapers.sites.manhwaclub import ManhwaClubAPI
+
 from Scrapers.sites.manhwahub import ManhwaHubAPI
 from Scrapers.sites.manytoon import ManyToonAPI
 from Scrapers.sites.hiperdex import HiperdexAPI
@@ -37,7 +37,7 @@ SITES = {
     "Comick":        ComickAPI,
     "Atsumaru":      AtsumaruAPI,
     "OmegaScans":    OmegaScansAPI,
-    "TheBlank":      TheBlankAPI,
+
     "WebCentral":    None,          # filled below
     "Toonily":       ToonilyAPI,
     "ManhwaRead":    ManhwaReadAPI,
@@ -45,7 +45,7 @@ SITES = {
     "Manga18fx":     Manga18fxAPI,
     "Manga18Club":   Manga18clubAPI,
     "Manhwa18":      Manhwa18API,
-    "ManhwaClub":    ManhwaClubAPI,
+
     "ManhwaHub":     ManhwaHubAPI,
     "ManyToon":      ManyToonAPI,
     "Hiperdex":      HiperdexAPI,

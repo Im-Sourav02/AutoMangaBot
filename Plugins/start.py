@@ -69,26 +69,26 @@ async def start_msg(client, message):
             logger.error(f"Database error (Add User): {db_e}")
 
         caption = (
-            f"<blockquote><b>🌸 WELCOME TO MANGA BOT!!</b></blockquote>\n\n"
-            f"<blockquote><b>📖 USE /search <name> TO FIND\n"
-            f"ANY MANGA / MANHWA!</b></blockquote>\n\n"
-            f"<blockquote><b>⚙️ USE /us TO CUSTOMIZE YOUR SETTINGS\n"
-            f"🔔 USE /subs TO VIEW YOUR SUBSCRIPTIONS</b></blockquote>"
+            f"<blockquote><b>🌸 ᴡᴇʟᴄᴏᴍᴇ ᴛᴏ ᴍᴀɴɢᴀ ʙᴏᴛ!!</b></blockquote>\n\n"
+            f"<blockquote><b>📖 ᴜsᴇ /search <name> ᴛᴏ ғɪɴᴅ\n"
+            f"ᴀɴʏ ᴍᴀɴɢᴀ/ᴍᴀɴʜᴡᴀ!</b></blockquote>\n\n"
+            f"<blockquote><b>⚙️ ᴜsᴇ /us ᴛᴏ ᴄᴜsᴛᴏᴍɪᴢᴇ ʏᴏᴜʀ sᴇᴛᴛɪɴɢs\n"
+            f"🔔 ᴜsᴇ /subs ᴛᴏ ᴠɪᴇᴡ ʏᴏᴜʀ sᴜʙsᴄʀɪᴘᴛɪᴏɴs</b></blockquote>"
         )
         
         START_PIC = "https://pictr.com/images/2026/08/14/xqMrZq.jpg"
 
         buttons = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("⚙️ Settings", callback_data="settings_menu"),
-                InlineKeyboardButton("📥 Queue", callback_data="queue_menu")
+                InlineKeyboardButton("⚙️ 𝖲𝖾𝗍𝗍𝗂𝗇𝗀𝗌", callback_data="settings_menu"),
+                InlineKeyboardButton("📥 𝖰𝗎𝖾𝗎𝖾", callback_data="queue_menu")
             ],
             [
-                InlineKeyboardButton("🔔 Subscribes", callback_data="subs_menu"),
-                InlineKeyboardButton("❓ Help", callback_data="help_menu")
+                InlineKeyboardButton("🔔 𝖲𝗎𝖻𝗌𝖼𝗋𝗂𝖻𝖾𝗌", callback_data="subs_menu"),
+                InlineKeyboardButton("❓ 𝖧𝖾𝗅𝗉", callback_data="help_menu")
             ],
             [
-                InlineKeyboardButton("❌ CLOSE", callback_data="close")
+                InlineKeyboardButton("❌ 𝖢𝖫𝖮𝖲𝖤", callback_data="close")
             ]
         ])
 
@@ -110,32 +110,22 @@ async def start_msg(client, message):
     except Exception as e:
         logger.error(f"/start failed: {e}", exc_info=True)
         try:
-            await message.reply_text(f"✅ Bot is alive! (Error displaying menu: {e})")
+            await message.reply_text(f"✅ 𝘉𝘰𝘵 𝘪𝘴 𝘈𝘭𝘪𝘷𝘦! (𝘌𝘳𝘳𝘰𝘳 𝘥𝘪𝘴𝘱𝘭𝘢𝘺𝘪𝘯𝘨 𝘮𝘦𝘯𝘶: {e})")
         except:
             pass
-
-# CantarellaBots
-# Don't Remove Credit
-# Telegram Channel @CantarellaBots
-#Supoort group @rexbotschat
 
 
 @Client.on_callback_query(filters.regex("^help_menu$"))
 async def help_menu(client, callback_query):
     paraphrased = (
-        "<b>📚 How to Use</b>\n\n"
-        "• <b>Search Manga:</b> Just send me the manga name (e.g. `One Piece`) to begin.\n\n"
-        "• <b>Select Source:</b> Choose your preferred Language and Website from the options.\n\n"
-        "• <b>Download or Subscribe:</b> You can download individual chapters or Subscribe to get auto-updates when new chapters are released.\n\n"
-        "<b>📢 Updates Channel:</b> @RexBots_Official"
+        "<b>📚 𝖧𝗈𝗐 𝗍𝗈 𝖴𝗌𝖾</b>\n\n"
+        "• <b>𝖲𝖾𝖺𝗋𝖼𝗁 𝖬𝖺𝗇𝗀𝖺:</b> Just send me the manga name (e.g. `One Piece`) to begin.\n\n"
+        "• <b>𝖲𝖾𝗅𝖾𝖼𝗍 𝖲𝗈𝗎𝗋𝖼𝖾:</b> Choose your preferred Language and Website from the options.\n\n"
+        "• <b>𝖣𝗈𝗐𝗇𝗅𝗈𝖺𝖽 𝗈𝗋 𝖲𝗎𝖻𝗌𝖼𝗋𝗂𝖻𝖾:</b> You can download individual chapters or Subscribe to get auto-updates when new chapters are released.\n\n"
+        "<b>📢 Updates Channel:</b> @Infinix_Botz"
     )
     
-    buttons = [[InlineKeyboardButton("🔙 back", callback_data="start_menu")]]
+    buttons = [[InlineKeyboardButton("🔙 𝘉𝘢𝘤𝘬", callback_data="start_menu")]]
     
     await edit_msg_with_pic(callback_query.message, paraphrased, InlineKeyboardMarkup(buttons))
 
-
-# CantarellaBots
-# Don't Remove Credit
-# Telegram Channel @CantarellaBots
-#Supoort group @rexbotschat

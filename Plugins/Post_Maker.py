@@ -1,8 +1,3 @@
-# CantarellaBots
-# Don't Remove Credit
-# Telegram Channel @CantarellaBots
-#Supoort group @rexbotschat
-
 import base64
 import logging
 from pyrogram import Client, filters, enums
