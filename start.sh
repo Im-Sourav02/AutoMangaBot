@@ -6,4 +6,4 @@ echo "Installing Camoufox browser..."
 camoufox fetch
 
 echo "Starting the bot..."
-python bot.py
+python Bot.py
