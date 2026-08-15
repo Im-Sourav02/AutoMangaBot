@@ -1,53 +1,41 @@
-# === Stage 1: builder (installs deps & downloads browsers) ======================
-FROM python:3.11-slim AS builder
+﻿# ════════════════════════════════════════════════════════════════════════════════
+#  Auto Manga Bot — Railway-ready Dockerfile
+#  All browser/OS installations happen at BUILD time so startup is instant.
+# ════════════════════════════════════════════════════════════════════════════════
+FROM python:3.11-slim
 
 WORKDIR /app
 
-# OS packages needed by Playwright Chromium + Camoufox (Firefox)
+# ── 1. OS-level dependencies for Playwright Chromium + Camoufox (Firefox) ──────
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Build helpers
     git curl wget \
+    # Chromium / Playwright
     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
     libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
     libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
     libxshmfence1 libx11-6 libx11-xcb1 libxcb1 libxext6 \
-    libgtk-3-0 libdbus-glib-1-2 libxt6 libpci3 \
+    # Firefox / Camoufox
+    libgtk-3-0 libdbus-glib-1-2 libxt6 libpci3 libxt6 \
+    # Fonts + misc
     xvfb fonts-liberation ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# ── 2. Python dependencies ───────────────────────────────────────────────────────
 RUN pip install --no-cache-dir --upgrade pip
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download Playwright Chromium during BUILD
+# ── 3. Install Playwright Chromium at BUILD time (cached layer) ──────────────────
 RUN pip install --no-cache-dir playwright && \
-    playwright install chromium --with-deps
+    playwright install chromium && \
+    playwright install-deps chromium
 
-# Download Camoufox browser during BUILD
+# ── 4. Download Camoufox browser at BUILD time (cached layer) ────────────────────
 RUN camoufox fetch
 
-# === Stage 2: final runtime image ===============================================
-FROM python:3.11-slim AS final
-
-WORKDIR /app
-
-# Runtime OS dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
-    libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-    libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
-    libxshmfence1 libx11-6 libx11-xcb1 libxcb1 libxext6 \
-    libgtk-3-0 libdbus-glib-1-2 libxt6 libpci3 \
-    xvfb fonts-liberation ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy Python packages and pre-downloaded browsers from builder
-COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
-COPY --from=builder /usr/local/bin /usr/local/bin
-COPY --from=builder /root/.cache /root/.cache
-
-# Copy application source
+# ── 5. Copy application source ───────────────────────────────────────────────────
 COPY . .
-RUN chmod +x start.sh
 
-CMD ["bash", "start.sh"]
+# ── 6. Runtime: just start the bot ───────────────────────────────────────────────
+CMD ["python", "Bot.py"]

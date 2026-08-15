@@ -122,24 +122,47 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
         )
         return "", "", None
 
+    # ── Memory-limiting Firefox prefs — keeps RAM under ~300 MB ───────────────
+    _ff_prefs = {
+        # Disable GPU acceleration (no GPU in Railway containers)
+        "layers.acceleration.disabled":           True,
+        "gfx.webrender.all":                      False,
+        "gfx.webrender.enabled":                  False,
+        # Limit JS worker threads
+        "dom.workers.maxPerDomain":               2,
+        # Disable telemetry / background services
+        "toolkit.telemetry.enabled":              False,
+        "datareporting.healthreport.uploadEnabled": False,
+        "browser.ping-centre.telemetry":          False,
+        # Reduce memory caches
+        "browser.cache.memory.capacity":          8192,   # 8 MB
+        "browser.sessionhistory.max_total_viewers": 0,
+        # Disable shared memory (crashes in Docker without --shm-size)
+        "media.ffmpeg.low-latency.enabled":       False,
+    }
+
+    # ── Extra env flags recognised by Playwright/Camoufox ─────────────────────
+    import os as _os
+    _os.environ.setdefault("MOZ_DISABLE_CONTENT_SANDBOX", "1")  # avoids EACCES
+
     logger.info(f"Camoufox: bypassing CF for {url}")
-    
-    # Aggressively limit memory to prevent OOM kills on Railway
-    browser_args = [
-        "--no-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--single-process",
-        "--no-zygote",
-        "--disable-background-networking"
-    ]
-    async with AsyncCamoufox(headless=True, args=browser_args) as browser:
-        page = await browser.new_page()
+    async with AsyncCamoufox(
+        headless=True,
+        firefox_user_prefs=_ff_prefs,
+        # Playwright-level context: restrict viewport to save memory
+        args=["--no-remote"],
+    ) as browser:
+        ctx  = await browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            java_script_enabled=True,
+            ignore_https_errors=True,
+        )
+        page = await ctx.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
             iframe_clicked = False
-            for i in range(15):  # up to 45 seconds
+            for i in range(15):  # up to 30 seconds
                 try:
                     title = (await page.title()).lower()
                     body  = await page.evaluate(
@@ -147,7 +170,6 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
                     )
                 except Exception:
                     # Execution context destroyed = page is navigating (CF redirect)
-                    # Wait for the new page to load then retry the check
                     try:
                         await page.wait_for_load_state("domcontentloaded", timeout=10000)
                         await page.wait_for_load_state("load", timeout=10000)
@@ -164,7 +186,6 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
                 if not is_cf:
                     break  # CF challenge cleared!
 
-                # Simulate human-like click inside the Cloudflare Turnstile iframe
                 if not iframe_clicked and (
                     "verify you are human" in body or "security verification" in body
                 ):
@@ -189,22 +210,19 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
                     except Exception as click_err:
                         logger.debug(f"Camoufox iframe click: {click_err}")
 
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
-            # CF challenge cleared — wait for the post-redirect page to fully load
-            # (CF form submission triggers a navigation; evaluate() will crash if called
-            #  while the new page is still loading → "Execution context was destroyed")
+            # Wait for the post-redirect page to fully load
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=12000)
                 await page.wait_for_load_state("load", timeout=12000)
             except Exception:
-                await asyncio.sleep(2)  # fallback buffer
+                await asyncio.sleep(2)
 
-            # Extra wait for lazy-loaded manga images to populate data-src attributes
             await asyncio.sleep(1)
 
-            # Extract cookies
-            cookies = await page.context.cookies()
+            # ── Extract the clearance cookie + UA ─────────────────────────────
+            cookies = await ctx.cookies()
             cf_clearance = next(
                 (c["value"] for c in cookies if c["name"] == "cf_clearance"), ""
             )
@@ -224,7 +242,16 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
 
             return cf_clearance, ua, html
         finally:
-            await page.close()
+            # ── Immediately close page & context to free memory ───────────────
+            try:
+                await page.close()
+            except Exception:
+                pass
+            try:
+                await ctx.close()
+            except Exception:
+                pass
+
 
 
 
@@ -248,15 +275,7 @@ def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[st
         except ImportError:
             return None
 
-        browser_args = [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process",
-            "--no-zygote",
-            "--disable-background-networking"
-        ]
-        async with AsyncCamoufox(headless=True, args=browser_args) as browser:
+        async with AsyncCamoufox(headless=True) as browser:
             page = await browser.new_page()
             try:
                 # Load the homepage first so CF cookies are set
