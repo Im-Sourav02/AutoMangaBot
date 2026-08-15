@@ -100,9 +100,9 @@ class HiveToonsAPI:
                 continue
             seen.add(slug)
             # Try to find the title from sibling/child elements
-            title_el = a.find(["h2", "h3", "span", "p"])
+            title_el = a.find(["h3", "h2", "h4"])
             title = title_el.get_text(strip=True) if title_el else ""
-            if not title:
+            if not title or title.lower() in ("manhwa", "manga", "manhua"):
                 title = slug.replace("-", " ").title()
             results.append({"id": slug, "title": title})
         self._series_cache = results
