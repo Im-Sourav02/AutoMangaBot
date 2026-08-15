@@ -336,20 +336,42 @@ class MadaraBaseAPI:
         try:
             url = f"{self.base_url}/?s={quote_plus(query)}&post_type=wp-manga"
             html = await self._fetch(url)
-            if not html:
-                return []
-            soup = self._soup(html)
             results = []
-            for a in soup.select(self.SEARCH_ITEM_SEL)[:limit * 2]:
-                href = a.get("href", "")
-                title = a.get_text(strip=True)
-                if not href or not title:
-                    continue
-                slug = self._slug_from_url(href)
-                if slug and not any(r["id"] == slug for r in results):
-                    results.append({"id": slug, "title": title})
-                if len(results) >= limit:
-                    break
+            if html:
+                soup = self._soup(html)
+                for a in soup.select(self.SEARCH_ITEM_SEL)[:limit * 2]:
+                    href = a.get("href", "")
+                    title = a.get_text(strip=True)
+                    if not href or not title:
+                        continue
+                    slug = self._slug_from_url(href)
+                    if slug and not any(r["id"] == slug for r in results):
+                        results.append({"id": slug, "title": title})
+                    if len(results) >= limit:
+                        break
+            
+            # If standard search yields no results (e.g. ToonGod disabled it), try Madara AJAX search
+            if not results:
+                data = {"action": "wp-manga-search-manga", "title": query}
+                ajax_resp = await self._fetch_post(f"{self.base_url}/wp-admin/admin-ajax.php", data)
+                if ajax_resp:
+                    try:
+                        import json
+                        js_data = json.loads(ajax_resp)
+                        if js_data.get("success") and js_data.get("data"):
+                            for item in js_data["data"]:
+                                href = item.get("url", "")
+                                title = item.get("title", "")
+                                if not href or not title:
+                                    continue
+                                slug = self._slug_from_url(href)
+                                if slug and not any(r["id"] == slug for r in results):
+                                    results.append({"id": slug, "title": title})
+                                if len(results) >= limit:
+                                    break
+                    except Exception as parse_err:
+                        logger.debug(f"search_manga ajax parse error: {parse_err}")
+
             return results
         except Exception as e:
             logger.error(f"{self.__class__.__name__} search_manga: {e}")
