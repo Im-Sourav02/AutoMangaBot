@@ -224,6 +224,58 @@ def _sync_camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
     return asyncio.run(_camoufox_bypass(url))
 
 
+def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[str]:
+    """
+    Execute a POST request *inside* a Camoufox browser context so that CF
+    cookies / challenge state are guaranteed to be present.
+    Runs in an executor thread (blocking wrapper).
+    """
+    _win_policy()
+
+    async def _do_post():
+        try:
+            from camoufox.async_api import AsyncCamoufox
+        except ImportError:
+            return None
+
+        async with AsyncCamoufox(headless=True) as browser:
+            page = await browser.new_page()
+            try:
+                # Load the homepage first so CF cookies are set
+                await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
+
+                # Wait for CF challenge to clear
+                for _ in range(15):
+                    title = await page.title()
+                    if "just a moment" not in title.lower() and "cloudflare" not in title.lower():
+                        break
+                    try:
+                        cf_frame = page.frame_locator("iframe[src*='challenges.cloudflare.com']")
+                        checkbox = cf_frame.locator("input[type='checkbox']")
+                        if await checkbox.count() > 0:
+                            await checkbox.click(delay=120)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(2)
+
+                # Build FormData and POST from inside the browser
+                form_entries = ", ".join(
+                    f"fd.append({k!r}, {v!r})" for k, v in data.items()
+                )
+                js = f"""async () => {{
+                    const fd = new FormData();
+                    {form_entries};
+                    const res = await fetch({post_url!r}, {{method: 'POST', body: fd}});
+                    return await res.text();
+                }}"""
+                result = await page.evaluate(js)
+                return result
+            finally:
+                await page.close()
+
+    return asyncio.run(_do_post())
+
+
 async def _get_clearance(base_url: str) -> Tuple[str, str]:
     """
     Return (cf_clearance, user_agent) for base_url's domain.
@@ -316,19 +368,49 @@ class MadaraBaseAPI:
         return html
 
     async def _fetch_post(self, url: str, data: dict) -> Optional[str]:
-        """POST with CF clearance injected when available."""
+        """
+        POST with full CF-bypass cascade:
+          1. curl_cffi + cached clearance (fast path)
+          2. Obtain fresh Camoufox clearance → retry curl_cffi
+          3. Execute POST *inside* the Camoufox browser context (last resort)
+        """
         from urllib.parse import urlparse
         domain = urlparse(self.base_url).netloc
+
+        # Tier 1 – try with cached clearance
         cached = _clearance_cache.get(domain)
         cf_cl, ua = "", ""
         if cached:
             _cf_cl, _ua, expires_at = cached
             if time.time() < expires_at:
                 cf_cl, ua = _cf_cl, _ua
-        return await _cffi_post(url, data, cf_clearance=cf_cl, ua_override=ua)
+
+        result = await _cffi_post(url, data, cf_clearance=cf_cl, ua_override=ua)
+        if result is not None:
+            return result
+
+        # Tier 2 – get fresh clearance via Camoufox, then retry POST
+        logger.info(f"{self.__class__.__name__}: CF blocking POST, getting clearance for {domain}")
+        cf_cl, ua = await _get_clearance(self.base_url)
+        if cf_cl:
+            result = await _cffi_post(url, data, cf_clearance=cf_cl, ua_override=ua)
+            if result is not None:
+                return result
+
+        # Tier 3 – execute POST inside the Camoufox browser (guaranteed to have cookies)
+        logger.info(f"{self.__class__.__name__}: executing POST inside Camoufox for {url}")
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None, _sync_camoufox_post, self.base_url, url, data
+        )
+        return result
 
     def _soup(self, html: str) -> BeautifulSoup:
         return BeautifulSoup(html, "lxml")
+
+    async def _soup_async(self, html: str) -> BeautifulSoup:
+        """Parse HTML in a thread pool to avoid blocking the event loop."""
+        return await asyncio.to_thread(BeautifulSoup, html, "lxml")
 
     # ── search ─────────────────────────────────────────────────────────────────
 

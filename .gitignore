@@ -8,9 +8,11 @@ __pycache__/
 downloads/
 scratch/
 test*.py
+parse_html*.py
 *.webp
 *.pdf
 *.json
+*.html
 manga_ids_cache.json
 fix_toonily.py
 generate_sites.py

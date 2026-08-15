@@ -22,6 +22,25 @@ import re
 
 logger = logging.getLogger(__name__)
 
+# ─── Chapter-ID registry ───────────────────────────────────────────────────────
+# Telegram's callback_data is capped at 64 bytes.  For sources whose chapter
+# IDs can be much longer (e.g. OmegaScans: "12345|series-slug|67890|ch-slug")
+# we store the full ID here and expose only a compact numeric token.
+_chapter_id_registry: dict[int, str] = {}   # token -> full_chapter_id
+_chapter_id_counter: int = 0
+
+def _register_chapter_id(full_id: str) -> int:
+    """Store full_id and return a short integer token."""
+    global _chapter_id_counter
+    _chapter_id_counter += 1
+    _chapter_id_registry[_chapter_id_counter] = full_id
+    return _chapter_id_counter
+
+def _resolve_chapter_id(token: int) -> str | None:
+    """Look up a token and return the full chapter ID, or None if expired."""
+    return _chapter_id_registry.get(token)
+
+
 from Plugins.Sites.mangakakalot import MangakakalotAPI
 from Plugins.Sites.allmanga import AllMangaAPI
 from Plugins.Sites.comick import ComickAPI
@@ -354,19 +373,43 @@ async def view_manga_cb(client, callback_query):
 
 @Client.on_callback_query(filters.regex("^chapters_"))
 async def chapters_list_cb(client, callback_query):
-    parts = callback_query.data.split("_")
-    if len(parts) < 4:
+    """
+    Shows a paginated chapter list.  callback_data format:
+        chapters_{source}_{manga_id}_{offset}
+    manga_id may itself contain underscores (e.g. Madara slugs), so we
+    treat everything from index-2 to the last segment as the manga_id and
+    the LAST segment as the numeric offset.
+    """
+    try:
+        raw = callback_query.data  # e.g. "chapters_OmegaScans_12345|slug_0"
+        # Split on "_" but limit to 3 parts: prefix, source, rest
+        _, source, rest = raw.split("_", 2)
+        # The last token after the final "_" is the integer offset
+        last_underscore = rest.rfind("_")
+        manga_id = rest[:last_underscore]
+        offset   = int(rest[last_underscore + 1:])
+    except Exception as parse_err:
+        logger.error(f"chapters_list_cb parse error: {parse_err} | data={callback_query.data!r}")
         await callback_query.answer("❌ Invalid callback data", show_alert=True)
         return
-    
-    source = parts[1]
-    offset = int(parts[-1])  # Last part is always offset
-    manga_id = "_".join(parts[2:-1])  # Everything between source and offset
-    
+
     API = get_api_class(source)
-    async with API(Config) as api:
-        chapters = await api.get_manga_chapters(manga_id, limit=10, offset=offset)
-    
+    if not API:
+        await callback_query.answer("❌ Source not found", show_alert=True)
+        return
+
+    page_size = 10
+
+    try:
+        async with API(Config) as api:
+            # Fetch chapters + cover in one context
+            chapters = await api.get_manga_chapters(manga_id, limit=page_size, offset=offset)
+            info = await api.get_manga_info(manga_id)
+    except Exception as e:
+        logger.error(f"chapters_list_cb fetch error: {e}", exc_info=True)
+        await callback_query.answer("❌ Failed to fetch chapters.", show_alert=True)
+        return
+
     if not chapters and offset == 0:
         await callback_query.answer("No chapters found.", show_alert=True)
         return
@@ -374,88 +417,98 @@ async def chapters_list_cb(client, callback_query):
         await callback_query.answer("No more chapters.", show_alert=True)
         return
 
-    # Calculate offset logic
-    # offset is chapter index (0 = first page of 10)
-    page_size = 10
+    cover_url = (info or {}).get("cover")
     current_page = (offset // page_size) + 1
-    
-    # We need total chapters to know when to stop
-    # But some sources don't give total length easily, so we just check if we got chapters
-    
+
+    # ── Chapter buttons — use token registry to stay within 64-byte limit ──
     buttons = []
     row = []
     for ch in chapters:
-        ch_num = ch['chapter']
+        ch_num   = ch["chapter"]
         btn_text = f"Chapter {ch_num}"
-        row.append(InlineKeyboardButton(btn_text, callback_data=f"dl_ask_{source}_{manga_id}_{ch['id'][:20]}"))
+        token    = _register_chapter_id(ch["id"])
+        # callback: dl_ask_{source}_{manga_id}_{token}
+        # Use a stable separator for manga_id: keep it as-is but build cb carefully
+        cb = f"dl_ask_{source}_{manga_id}_{token}"
+        # Safety: if still over 64 bytes (very long manga_id), shorten token only
+        if len(cb.encode()) > 64:
+            # Token is just an int so it's always tiny — manga_id must be the culprit;
+            # Shorten the manga_id portion in the callback (token still resolves the real ID)
+            max_mid = 64 - len(f"dl_ask_{source}__") - len(str(token))
+            cb = f"dl_ask_{source}_{manga_id[:max_mid]}_{token}"
+        row.append(InlineKeyboardButton(btn_text, callback_data=cb))
         if len(row) == 2:
             buttons.append(row)
             row = []
-    if row: buttons.append(row)
-    
-    # Pagination: << 5x, < 2x, <, >, 2x >, 5x >>
-    # Wait, we need to know max pages. We'll just provide the buttons and if they hit an empty page it says "No more".
-    # User requested: >>, 2x>, 5x>
+    if row:
+        buttons.append(row)
+
+    # ── Pagination nav ──
     nav_row_1 = []
     nav_row_2 = []
-    
     if offset >= page_size:
-        nav_row_1.append(InlineKeyboardButton("<<", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size}"))
+        nav_row_1.append(InlineKeyboardButton("<< Prev", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size}"))
     if offset >= page_size * 2:
-        nav_row_1.insert(0, InlineKeyboardButton("<2x", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*2}"))
+        nav_row_1.insert(0, InlineKeyboardButton("<< 2x",  callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*2}"))
     if offset >= page_size * 5:
-        nav_row_1.insert(0, InlineKeyboardButton("<5x", callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*5}"))
-        
-    nav_row_2.append(InlineKeyboardButton(">>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size}"))
-    nav_row_2.append(InlineKeyboardButton("2x>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*2}"))
-    nav_row_2.append(InlineKeyboardButton("5x>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*5}"))
-    
+        nav_row_1.insert(0, InlineKeyboardButton("<< 5x",  callback_data=f"chapters_{source}_{manga_id}_{offset - page_size*5}"))
+
+    nav_row_2.append(InlineKeyboardButton("Next >>", callback_data=f"chapters_{source}_{manga_id}_{offset + page_size}"))
+    nav_row_2.append(InlineKeyboardButton("2x >>",  callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*2}"))
+    nav_row_2.append(InlineKeyboardButton("5x >>",  callback_data=f"chapters_{source}_{manga_id}_{offset + page_size*5}"))
+
     if nav_row_1: buttons.append(nav_row_1)
     if nav_row_2: buttons.append(nav_row_2)
-    
-    # Check if subscribed
+
+    # ── Subscription status ──
     user_id = callback_query.from_user.id
     subs = await Seishiro.subs_db.get_user_subscriptions(user_id)
-    is_subscribed = any(sub.get('url') == manga_id and sub.get('source') == source for sub in subs)
+    is_subscribed = any(sub.get("url") == manga_id and sub.get("source") == source for sub in subs)
     sub_text = "🔕 UNSUBSCRIBE 🔕" if is_subscribed else "🔔 SUBSCRIBE 🔔"
-    sub_cb = f"unsub_{source}_{manga_id}" if is_subscribed else f"sub_{source}_{manga_id}"
+    sub_cb   = f"unsub_{source}_{manga_id}"  if is_subscribed else f"sub_{source}_{manga_id}"
 
-    # Bottom utilities
-    user_settings = await Seishiro.settings_db.get_settings(user_id)
-    current_format = user_settings.get("file_type", "PDF")
-    
+    # ── Bottom action row (guard 64-byte limit) ──
+    user_settings  = await Seishiro.settings_db.get_settings(user_id)
     autobat_cb = f"autobat_{source}_{manga_id}"
-    dl_pg_cb = f"dl_pg_{source}_{manga_id}_{offset}"
-    dl_all_cb = f"dl_all_{source}_{manga_id}"
-    
-    # Guard 64-byte limit
-    if len(autobat_cb.encode('utf-8')) > 64:
-        short_id = manga_id[:62 - len(source) - 10]
-        autobat_cb = f"autobat_{source}_{short_id}"
-        dl_pg_cb = f"dl_pg_{source}_{short_id}_{offset}"
-        dl_all_cb = f"dl_all_{source}_{short_id}"
-        
+    dl_pg_cb   = f"dl_pg_{source}_{manga_id}_{offset}"
+    dl_all_cb  = f"dl_all_{source}_{manga_id}"
+
+    def _guard(cb, prefix, suffix=""):
+        if len(cb.encode("utf-8")) > 64:
+            max_mid = 64 - len(prefix) - len(suffix) - 2
+            short   = manga_id[:max(max_mid, 4)]
+            return f"{prefix}_{short}{suffix}"
+        return cb
+
+    autobat_cb = _guard(autobat_cb, f"autobat_{source}")
+    dl_pg_cb   = _guard(dl_pg_cb,   f"dl_pg_{source}",  f"_{offset}")
+    dl_all_cb  = _guard(dl_all_cb,  f"dl_all_{source}")
+
     buttons.extend([
         [InlineKeyboardButton("🟦 𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 🟦", callback_data=autobat_cb)],
-        [InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb), InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb)],
+        [
+            InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb),
+            InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb),
+        ],
         [InlineKeyboardButton(sub_text, callback_data=sub_cb)],
-        [InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"), InlineKeyboardButton("| CLOSE |", callback_data="stats_close")]
+        [
+            InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"),
+            InlineKeyboardButton("| CLOSE |", callback_data="stats_close"),
+        ],
     ])
-    
-    caption_text = f"<b>Chapter Selection:</b>\nPage: {current_page}"
-    
-    try:
-        api_class = get_api_class(source)
-        cover_url = None
-        if api_class:
-            async with api_class(Config) as api:
-                info = await api.get_manga_info(manga_id)
-                if info:
-                    cover_url = info.get('cover')
 
-        await edit_msg_with_pic(callback_query.message, caption_text, InlineKeyboardMarkup(buttons), pic=cover_url)
+    caption_text = f"<b>Chapter Selection:</b>\nPage: {current_page}"
+
+    try:
+        await edit_msg_with_pic(
+            callback_query.message, caption_text,
+            InlineKeyboardMarkup(buttons), pic=cover_url
+        )
     except Exception as e:
-        logger.error(f"Edit error: {e}")
+        logger.error(f"chapters_list_cb edit error: {e}", exc_info=True)
+        # Don't silently delete — at least answer the callback so the spinner stops
+        await callback_query.answer("⚠️ Failed to display chapters.", show_alert=True)
+
 
 
 # CantarellaBots
@@ -972,23 +1025,51 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
 
 @Client.on_callback_query(filters.regex("^dl_ask_"))
 async def dl_ask_cb(client, callback_query):
-    data = callback_query.data.split("_")
-    source = data[2]
-    manga_id = data[3]
-    chapter_id = "_".join(data[4:])
-    
+    """
+    callback_data format:  dl_ask_{source}_{manga_id}_{chapter_token}
+    The chapter_token is an integer registered in _chapter_id_registry.
+    We split from the RIGHT so a manga_id with underscores is handled correctly.
+    """
+    data = callback_query.data  # e.g. "dl_ask_OmegaScans_12345|slug_42"
+    try:
+        # Split into at most 4 parts from the left
+        _, source, rest = data.split("_", 2)
+        # token is the last segment, manga_id is everything before it
+        last_us = rest.rfind("_")
+        manga_id = rest[:last_us]
+        token    = int(rest[last_us + 1:])
+    except Exception as parse_err:
+        logger.error(f"dl_ask_cb parse error: {parse_err} | data={data!r}")
+        await callback_query.answer("❌ Invalid data, please go back and retry.", show_alert=True)
+        return
+
+    # Resolve the full chapter ID from registry
+    chapter_id = _resolve_chapter_id(token)
+    if chapter_id is None:
+        logger.warning(f"dl_ask_cb: token {token} not found in registry (session restart?)")
+        await callback_query.answer(
+            "⚠️ Session expired. Please go back and re-open the chapter list.",
+            show_alert=True,
+        )
+        return
+
     try:
         await callback_query.answer("𝘚𝘵𝘢𝘳𝘵𝘪𝘯𝘨 𝘋𝘰𝘸𝘯𝘭𝘰𝘢𝘥...", show_alert=False)
     except Exception:
         pass
-        
+
     db_channel = await Seishiro.get_default_channel()
     channel_id = int(db_channel) if db_channel else callback_query.message.chat.id
-    
+
     from Plugins.task_manager import task_manager
     user_id = callback_query.from_user.id
-    pos = await task_manager.add_task(user_id, callback_query.message.chat.id, execute_download, client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id)
+    pos = await task_manager.add_task(
+        user_id, callback_query.message.chat.id,
+        execute_download,
+        client, channel_id, source, manga_id, chapter_id, callback_query.message.chat.id
+    )
     await callback_query.message.reply(f"✅ 𝘈𝘥𝘥𝘦𝘥 𝘤𝘩𝘢𝘱𝘵𝘦𝘳 𝘵𝘰 𝘘𝘶𝘦𝘶𝘦. 𝘗𝘰𝘴𝘪𝘵𝘪𝘰𝘯: {pos}")
+
 
 
 
