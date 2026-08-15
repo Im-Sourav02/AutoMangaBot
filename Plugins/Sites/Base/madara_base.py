@@ -123,7 +123,17 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
         return "", "", None
 
     logger.info(f"Camoufox: bypassing CF for {url}")
-    async with AsyncCamoufox(headless=True) as browser:
+    
+    # Aggressively limit memory to prevent OOM kills on Railway
+    browser_args = [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+        "--no-zygote",
+        "--disable-background-networking"
+    ]
+    async with AsyncCamoufox(headless=True, args=browser_args) as browser:
         page = await browser.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=45000)
@@ -238,7 +248,15 @@ def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[st
         except ImportError:
             return None
 
-        async with AsyncCamoufox(headless=True) as browser:
+        browser_args = [
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process",
+            "--no-zygote",
+            "--disable-background-networking"
+        ]
+        async with AsyncCamoufox(headless=True, args=browser_args) as browser:
             page = await browser.new_page()
             try:
                 # Load the homepage first so CF cookies are set

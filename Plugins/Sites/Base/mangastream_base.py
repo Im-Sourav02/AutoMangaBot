@@ -45,8 +45,15 @@ async def _make_pw_page(pw, headless=True):
         _stealth = None
     browser = await pw.chromium.launch(
         headless=headless,
-        args=["--no-sandbox", "--disable-dev-shm-usage",
-              "--disable-blink-features=AutomationControlled"],
+        args=[
+            "--no-sandbox", 
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process",
+            "--no-zygote",
+            "--disable-background-networking",
+            "--disable-blink-features=AutomationControlled"
+        ],
     )
     ctx = await browser.new_context(
         user_agent=UA, viewport={"width": 1280, "height": 720},

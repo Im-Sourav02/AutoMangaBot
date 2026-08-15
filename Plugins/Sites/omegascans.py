@@ -233,7 +233,14 @@ async def _fetch_images_pw(url: str) -> List[str]:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+                "--no-zygote",
+                "--disable-background-networking"
+            ],
         )
         ctx = await browser.new_context(
             user_agent=(

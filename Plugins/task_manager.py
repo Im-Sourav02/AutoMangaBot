@@ -67,7 +67,11 @@ class TaskQueueManager:
                 except Exception as e:
                     logger.error(f"Error executing queued task for user {user_id}: {e}")
                 finally:
-                    self.user_queues[user_id].task_done()
+                    try:
+                        self.user_queues[user_id].task_done()
+                    except ValueError:
+                        # task_done() called too many times (queue was likely cleared concurrently)
+                        pass
                     
             except Exception as e:
                 logger.error(f"Worker error for user {user_id}: {e}")
