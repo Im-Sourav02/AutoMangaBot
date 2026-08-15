@@ -739,7 +739,8 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
                 
             except Exception as e:
                 logger.error(f"Upload failed: {e}")
-                await status_msg.edit_text("❌ failed to upload file.")
+                try: await status_msg.edit_text("❌ failed to upload file.")
+                except Exception: pass
             
             if thumb_path and Path(thumb_path).exists():
                 Path(thumb_path).unlink()
@@ -751,7 +752,8 @@ async def execute_download_combined(client, target_chat_id, source, manga_id, ch
 
     except Exception as e:
         logger.error(f"DL Error: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ Error: {e}")
+        try: await status_msg.edit_text(f"❌ Error: {e}")
+        except Exception: pass
 
 async def execute_download(client, target_chat_id, source, manga_id, chapter_id, user_id, status_chat_id=None):
     """
@@ -883,7 +885,7 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                     if not c_title: continue
                     ratio = difflib.SequenceMatcher(None, manga_title.lower(), c_title).ratio()
                     if ratio > 0.8 or manga_title.lower() in c_title or c_title in manga_title.lower():
-                        auto_upload_id = chan.get('_id')
+                        auto_upload_id = chan.get('channel_id')
                         break
 
                 should_send_to_aup = False
@@ -951,7 +953,8 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
                 # Do NOT send to user PM if dump_channel is set (requested by user)
             except Exception as e:
                 logger.error(f"Upload failed: {e}")
-                await status_msg.edit_text("❌ failed to upload file.")
+                try: await status_msg.edit_text("❌ failed to upload file.")
+                except Exception: pass
             
             if thumb_path and Path(thumb_path).exists():
                 Path(thumb_path).unlink()
@@ -963,7 +966,8 @@ async def execute_download(client, target_chat_id, source, manga_id, chapter_id,
 
     except Exception as e:
         logger.error(f"DL Error: {e}", exc_info=True)
-        await status_msg.edit_text(f"❌ Error: {e}")
+        try: await status_msg.edit_text(f"❌ Error: {e}")
+        except Exception: pass
 
 
 @Client.on_callback_query(filters.regex("^dl_ask_"))
