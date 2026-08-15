@@ -11,7 +11,12 @@ from Plugins.Sites.mangadex import MangaDexAPI
 from Plugins.Sites.mangaforest import MangaForestAPI
 from Database.database import Seishiro
 from Database.subscriptions import SubscriptionDB
-from Plugins.helper import edit_msg_with_pic, get_styled_text, user_states, user_data, WAITING_CHAPTER_INPUT
+from Plugins.helper import (
+    edit_msg_with_pic, get_styled_text,
+    user_states, user_data,
+    WAITING_CHAPTER_INPUT, WAITING_BATCH_NUMBER,
+)
+
 import logging
 import asyncio
 import difflib
@@ -119,11 +124,18 @@ def get_api_class(source):
 
 
 def check_search_state(_, __, m):
+    """Return True only when the message should be treated as a search query."""
     if m.text and m.text.startswith('/'):
         return False
     uid = m.from_user.id
-    if uid not in user_states: return True
-    return user_states[uid] == WAITING_CHAPTER_INPUT
+    state = user_states.get(uid)
+    # Pass through only if: no active state, OR in the chapter-range-input sub-state
+    if state is None:
+        return True
+    if state == WAITING_CHAPTER_INPUT:
+        return True
+    # WAITING_BATCH_NUMBER and any other state must NOT fall through to search
+    return False
 
 search_filter = filters.create(check_search_state)
 
@@ -485,7 +497,7 @@ async def chapters_list_cb(client, callback_query):
     dl_all_cb  = _guard(dl_all_cb,  f"dl_all_{source}")
 
     buttons.extend([
-        [InlineKeyboardButton("🟦 𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 🟦", callback_data=autobat_cb)],
+        [InlineKeyboardButton("Auto Batch", callback_data=autobat_cb)],
         [
             InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb),
             InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb),
@@ -1073,100 +1085,176 @@ async def dl_ask_cb(client, callback_query):
 
 
 
-AWAITING_BATCH = {}
+
+AWAITING_BATCH = {}  # legacy; state now lives in user_states/user_data
+
 
 @Client.on_callback_query(filters.regex("^autobat_"))
 async def autobatch_cb(client, callback_query):
-    parts = callback_query.data.split("_")
-    source = parts[1]
-    manga_id = "_".join(parts[2:])
-    user_id = callback_query.from_user.id
-    
-    AWAITING_BATCH[user_id] = {'source': source, 'manga_id': manga_id}
-    
-    await callback_query.answer("Auto Batch Selected", show_alert=False)
-    
+    """
+    callback_data format: autobat_{source}_{manga_id}
+
+    Sets FSM state WAITING_BATCH_NUMBER in user_states so the search handler
+    is bypassed and autobatch_reply_handler gets the next message exclusively.
+    """
+    data = callback_query.data
+    # Strip the "autobat_" prefix, then split source from manga_id once
+    without_prefix = data[len("autobat_"):]
+    first_us = without_prefix.find("_")
+    if first_us == -1:
+        await callback_query.answer("❌ Bad callback data.", show_alert=True)
+        return
+    source   = without_prefix[:first_us]
+    manga_id = without_prefix[first_us + 1:]
+    user_id  = callback_query.from_user.id
+
+    # Set FSM state — this blocks the search handler from stealing the reply
+    user_data[user_id]   = {"source": source, "manga_id": manga_id}
+    user_states[user_id] = WAITING_BATCH_NUMBER
+
+    await callback_query.answer("Auto Batch selected!", show_alert=False)
+
     from pyrogram.types import ForceReply
     await callback_query.message.reply(
-        "🟦 <b>𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 𝗠𝗼𝗱𝗲</b>\n\n"
-        "Please reply to this message with the number of chapters per batch (e.g. 10)\n"
-        "<i>Or send /cancel to abort.</i>",
-        reply_markup=ForceReply(selective=True)
+        "<b>⚡ Auto Batch Mode</b>\n\n"
+        "Reply to this message with the <b>number of chapters per batch</b>\n"
+        "<i>Example: reply 10 → combines Ch.1–10, Ch.11–20, …</i>\n\n"
+        "Send /cancel to abort.",
+        reply_markup=ForceReply(selective=True),
+        parse_mode=enums.ParseMode.HTML,
     )
 
-@Client.on_message(filters.reply & filters.text & filters.private)
+
+@Client.on_message(
+    filters.text & filters.private
+    & ~filters.command(["start", "help", "settings", "search"])
+)
 async def autobatch_reply_handler(client, message):
+    """
+    Handles the batch-size number reply.
+    Fires only when the user is in WAITING_BATCH_NUMBER state.
+    Because check_search_state returns False for that state, message_handler
+    never sees these messages — no race condition.
+    """
     user_id = message.from_user.id
-    if user_id not in AWAITING_BATCH:
+
+    # Only act if this user is waiting for a batch number
+    if user_states.get(user_id) != WAITING_BATCH_NUMBER:
         return
-        
-    if not message.reply_to_message or "𝗔𝘂𝘁𝗼 𝗕𝗮𝘁𝗰𝗵 𝗠𝗼𝗱𝗲" not in message.reply_to_message.text:
-        return
-        
-    if message.text.lower() == "/cancel":
-        del AWAITING_BATCH[user_id]
+
+    text = (message.text or "").strip()
+
+    # /cancel support
+    if text.lower() in ("/cancel", "cancel"):
+        user_states.pop(user_id, None)
+        user_data.pop(user_id, None)
         await message.reply("❌ Auto Batch cancelled.")
         return
-        
+
     try:
-        batch_size = int(message.text.strip())
-        if batch_size <= 0: raise ValueError
-    except ValueError:
-        await message.reply("❌ Please reply with a valid positive number.")
+        batch_size = int(text)
+        if batch_size <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.reply(
+            "❌ Please send a valid positive integer (e.g. <code>10</code>).",
+            parse_mode=enums.ParseMode.HTML,
+        )
         return
-        
-    state = AWAITING_BATCH.pop(user_id)
-    source = state['source']
-    manga_id = state['manga_id']
-    
-    status_msg = await message.reply(f"<i>⏳ 𝘍𝘦𝘵𝘤𝘩𝘪𝘯𝘨 𝘈𝘭𝘭 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴...</i>", parse_mode=enums.ParseMode.HTML)
-    
+
+    # Consume FSM state
+    ctx      = user_data.pop(user_id, {})
+    user_states.pop(user_id, None)
+    source   = ctx.get("source", "")
+    manga_id = ctx.get("manga_id", "")
+
+    if not source or not manga_id:
+        await message.reply("❌ Session data lost — please open the chapter list again.")
+        return
+
+    status_msg = await message.reply(
+        f"<i>⏳ Fetching all chapters for batch size {batch_size}…</i>",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
     API = get_api_class(source)
-    all_chapters = []
-    
-    async with API(Config) as api:
-        c_offset = 0
-        while True:
-            batch = await api.get_manga_chapters(manga_id, limit=100, offset=c_offset)
-            if not batch: break
-            all_chapters.extend(batch)
-            if len(batch) < 100: break
-            c_offset += 100
-            
-    if not all_chapters:
-        await status_msg.edit_text("❌ 𝘕𝘰 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘍𝘰𝘶𝘯𝘥.")
+    if not API:
+        await status_msg.edit_text(f"❌ Unknown source: {source}")
         return
-        
-    all_chapters.sort(key=lambda x: float(x['chapter']))
-    
-    chunks = []
+
+    all_chapters = []
+    try:
+        async with API(Config) as api:
+            c_offset = 0
+            while True:
+                batch = await api.get_manga_chapters(manga_id, limit=100, offset=c_offset)
+                if not batch:
+                    break
+                all_chapters.extend(batch)
+                if len(batch) < 100:
+                    break
+                c_offset += 100
+    except Exception as e:
+        logger.error(f"autobatch fetch error: {e}", exc_info=True)
+        await status_msg.edit_text(f"❌ Failed to fetch chapters: {e}")
+        return
+
+    if not all_chapters:
+        await status_msg.edit_text("❌ No chapters found.")
+        return
+
+    # Sort ascending; guard against non-numeric chapter values
+    def _ch_sort_key(ch):
+        try:
+            return float(ch["chapter"])
+        except (ValueError, KeyError):
+            return 0.0
+
+    all_chapters.sort(key=_ch_sort_key)
+
+    # Split into full batches + leftover singles
+    chunks  = []
     singles = []
-    
     for i in range(0, len(all_chapters), batch_size):
-        chunk = all_chapters[i:i + batch_size]
+        chunk = all_chapters[i: i + batch_size]
         if len(chunk) == batch_size:
             chunks.append(chunk)
         else:
             singles.extend(chunk)
-            
-    await status_msg.edit_text(f"✅ 𝘍𝘰𝘶𝘯𝘥 {len(all_chapters)} 𝘊𝘩𝘢𝘱𝘵𝘦𝘳𝘴. 𝘘𝘶𝘦𝘶𝘦𝘪𝘯𝘨 {len(chunks)} 𝘉𝘢𝘵𝘤𝘩𝘦𝘴 𝘢𝘯𝘥 {len(singles)} 𝘚𝘪𝘯𝘨𝘭𝘦𝘴...")
-    
+
+    await status_msg.edit_text(
+        f"✅ Found <b>{len(all_chapters)}</b> chapters.\n"
+        f"Queuing <b>{len(chunks)}</b> combined batches + <b>{len(singles)}</b> singles…",
+        parse_mode=enums.ParseMode.HTML,
+    )
+
     from Plugins.task_manager import task_manager
     import Plugins.helper as helper
-    
+
     for chunk in chunks:
         if helper.CANCEL_TASKS.get(message.chat.id, False):
             helper.CANCEL_TASKS[message.chat.id] = False
             break
-        await task_manager.add_task(user_id, message.chat.id, execute_download_combined, client, message.chat.id, source, manga_id, chunk, user_id)
-        
+        await task_manager.add_task(
+            user_id, message.chat.id,
+            execute_download_combined,
+            client, message.chat.id, source, manga_id, chunk, user_id,
+        )
+
     for ch in singles:
         if helper.CANCEL_TASKS.get(message.chat.id, False):
             helper.CANCEL_TASKS[message.chat.id] = False
             break
-        await task_manager.add_task(user_id, message.chat.id, execute_download, client, message.chat.id, source, manga_id, ch['id'], user_id)
-        
-    await status_msg.edit_text(f"✅ 𝘈𝘥𝘥𝘦𝘥 𝘢𝘭𝘭 {len(all_chapters)} 𝘤𝘩𝘢𝘱𝘵𝘦𝘳𝘴 𝘵𝘰 𝘘𝘶𝘦𝘶𝘦.")
+        await task_manager.add_task(
+            user_id, message.chat.id,
+            execute_download,
+            client, message.chat.id, source, manga_id, ch["id"], user_id,
+        )
+
+    await status_msg.edit_text(
+        f"✅ Added all <b>{len(all_chapters)}</b> chapters to queue.",
+        parse_mode=enums.ParseMode.HTML,
+    )
 
 
 @Client.on_callback_query(filters.regex("^dl_pg_"))
