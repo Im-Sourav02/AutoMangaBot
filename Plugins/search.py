@@ -16,6 +16,7 @@ from Plugins.helper import (
     user_states, user_data,
     WAITING_CHAPTER_INPUT, WAITING_BATCH_NUMBER,
 )
+from Plugins.styled_keyboard import send_message_with_styled_keyboard, BUTTON_COLORS
 
 import logging
 import asyncio
@@ -496,25 +497,35 @@ async def chapters_list_cb(client, callback_query):
     dl_pg_cb   = _guard(dl_pg_cb,   f"dl_pg_{source}",  f"_{offset}")
     dl_all_cb  = _guard(dl_all_cb,  f"dl_all_{source}")
 
-    buttons.extend([
-        [InlineKeyboardButton("Auto Batch", callback_data=autobat_cb)],
+    dict_buttons = []
+    for row in buttons:
+        dict_row = []
+        for b in row:
+            dict_row.append({"text": b.text, "callback_data": b.callback_data})
+        dict_buttons.append(dict_row)
+
+    dict_buttons.extend([
+        [{"text": "Auto Batch", "callback_data": autobat_cb, "emoji_id": BUTTON_COLORS["primary"]}],
         [
-            InlineKeyboardButton("⬆ FULL PAGE ⬆", callback_data=dl_pg_cb),
-            InlineKeyboardButton("⬆ ALL CHAPTERS ⬆", callback_data=dl_all_cb),
+            {"text": "⬆ FULL PAGE ⬆", "callback_data": dl_pg_cb},
+            {"text": "⬆ ALL CHAPTERS ⬆", "callback_data": dl_all_cb},
         ],
-        [InlineKeyboardButton(sub_text, callback_data=sub_cb)],
+        [{"text": sub_text, "callback_data": sub_cb}],
         [
-            InlineKeyboardButton("BACK", callback_data=f"view_{source}_{manga_id}"),
-            InlineKeyboardButton("| CLOSE |", callback_data="stats_close"),
+            {"text": "BACK", "callback_data": f"view_{source}_{manga_id}"},
+            {"text": "| CLOSE |", "callback_data": "stats_close"},
         ],
     ])
 
     caption_text = f"<b>Chapter Selection:</b>\nPage: {current_page}"
 
     try:
-        await edit_msg_with_pic(
-            callback_query.message, caption_text,
-            InlineKeyboardMarkup(buttons), pic=cover_url
+        await callback_query.message.delete()
+        await send_message_with_styled_keyboard(
+            client=client,
+            chat_id=callback_query.message.chat.id,
+            text=caption_text,
+            button_layout=dict_buttons
         )
     except Exception as e:
         logger.error(f"chapters_list_cb edit error: {e}", exc_info=True)
