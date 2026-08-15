@@ -1,12 +1,16 @@
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
 .env
 *.session
+*.session-journal
 downloads/
 scratch/
 test*.py
 *.webp
 *.pdf
+*.json
 manga_ids_cache.json
 fix_toonily.py
 generate_sites.py
