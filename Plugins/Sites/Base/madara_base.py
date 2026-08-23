@@ -157,6 +157,7 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
         async with AsyncCamoufox(
             headless=True,
             firefox_user_prefs=_ff_prefs,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
         ) as browser:
             # NOTE: use browser.new_page() directly — AsyncCamoufox does NOT
             # reliably support new_context(); using it causes
@@ -304,7 +305,10 @@ def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[st
                 return True
 
         try:
-            async with AsyncCamoufox(headless=True) as browser:
+            async with AsyncCamoufox(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"]
+            ) as browser:
                 page = await browser.new_page()
                 try:
                     await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)

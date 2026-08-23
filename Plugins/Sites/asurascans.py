@@ -73,7 +73,7 @@ class AsuraScansAPI:
             logger.warning(f"AsuraScans search returned no data for query={query!r}")
             return results
 
-        items = data["data"]
+        items = data.get("data") or []
 
         # ── Validation: if the API ignored our param it returns 339 results ──
         # A genuine search for a specific title should return far fewer items.
