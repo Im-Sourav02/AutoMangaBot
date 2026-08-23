@@ -163,6 +163,19 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
             # reliably support new_context(); using it causes
             # "Target page, context or browser has been closed" crashes.
             page = await browser.new_page()
+
+            # Aggressive memory saving: block images, media, fonts
+            async def intercept_route(route):
+                if route.request.resource_type in ["image", "media", "font", "stylesheet"]:
+                    await route.abort()
+                else:
+                    await route.continue_()
+
+            try:
+                await page.route("**/*", intercept_route)
+            except Exception:
+                pass
+
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
@@ -310,6 +323,18 @@ def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[st
                 args=["--no-sandbox", "--disable-dev-shm-usage"]
             ) as browser:
                 page = await browser.new_page()
+                
+                async def intercept_route(route):
+                    if route.request.resource_type in ["image", "media", "font", "stylesheet"]:
+                        await route.abort()
+                    else:
+                        await route.continue_()
+
+                try:
+                    await page.route("**/*", intercept_route)
+                except Exception:
+                    pass
+
                 try:
                     await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
 

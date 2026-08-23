@@ -1,4 +1,4 @@
-﻿# ════════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════════
 #  Auto Manga Bot — Railway-ready Dockerfile
 #  All browser/OS installations happen at BUILD time so startup is instant.
 # ════════════════════════════════════════════════════════════════════════════════
@@ -38,4 +38,4 @@ RUN camoufox fetch
 COPY . .
 
 # ── 6. Runtime: just start the bot ───────────────────────────────────────────────
-CMD ["python", "Bot.py"]
+CMD ["xvfb-run", "-a", "python", "Bot.py"]
