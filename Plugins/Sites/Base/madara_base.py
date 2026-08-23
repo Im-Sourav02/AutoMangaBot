@@ -125,134 +125,156 @@ async def _camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
     # ── Memory-limiting Firefox prefs — keeps RAM under ~300 MB ───────────────
     _ff_prefs = {
         # Disable GPU acceleration (no GPU in Railway containers)
-        "layers.acceleration.disabled":           True,
-        "gfx.webrender.all":                      False,
-        "gfx.webrender.enabled":                  False,
+        "layers.acceleration.disabled":            True,
+        "gfx.webrender.all":                       False,
+        "gfx.webrender.enabled":                   False,
         # Limit JS worker threads
-        "dom.workers.maxPerDomain":               2,
+        "dom.workers.maxPerDomain":                2,
         # Disable telemetry / background services
-        "toolkit.telemetry.enabled":              False,
+        "toolkit.telemetry.enabled":               False,
         "datareporting.healthreport.uploadEnabled": False,
-        "browser.ping-centre.telemetry":          False,
+        "browser.ping-centre.telemetry":           False,
         # Reduce memory caches
-        "browser.cache.memory.capacity":          8192,   # 8 MB
+        "browser.cache.memory.capacity":           8192,   # 8 MB
         "browser.sessionhistory.max_total_viewers": 0,
         # Disable shared memory (crashes in Docker without --shm-size)
-        "media.ffmpeg.low-latency.enabled":       False,
+        "media.ffmpeg.low-latency.enabled":        False,
     }
 
-    # ── Extra env flags recognised by Playwright/Camoufox ─────────────────────
+    # Env flag: avoid sandbox EACCES inside Docker
     import os as _os
-    _os.environ.setdefault("MOZ_DISABLE_CONTENT_SANDBOX", "1")  # avoids EACCES
+    _os.environ.setdefault("MOZ_DISABLE_CONTENT_SANDBOX", "1")
+
+    def _page_closed(page) -> bool:
+        """Return True if the page/browser is already gone."""
+        try:
+            return page.is_closed()
+        except Exception:
+            return True
 
     logger.info(f"Camoufox: bypassing CF for {url}")
-    async with AsyncCamoufox(
-        headless=True,
-        firefox_user_prefs=_ff_prefs,
-        # Playwright-level context: restrict viewport to save memory
-        args=["--no-remote"],
-    ) as browser:
-        ctx  = await browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            java_script_enabled=True,
-            ignore_https_errors=True,
-        )
-        page = await ctx.new_page()
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    try:
+        async with AsyncCamoufox(
+            headless=True,
+            firefox_user_prefs=_ff_prefs,
+        ) as browser:
+            # NOTE: use browser.new_page() directly — AsyncCamoufox does NOT
+            # reliably support new_context(); using it causes
+            # "Target page, context or browser has been closed" crashes.
+            page = await browser.new_page()
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
-            iframe_clicked = False
-            for i in range(15):  # up to 30 seconds
-                try:
-                    title = (await page.title()).lower()
-                    body  = await page.evaluate(
-                        "() => document.body?.innerText?.toLowerCase() || ''"
-                    )
-                except Exception:
-                    # Execution context destroyed = page is navigating (CF redirect)
+                iframe_clicked = False
+                for i in range(15):  # up to 30 s
+                    if _page_closed(page):
+                        logger.warning("Camoufox: page closed unexpectedly during CF poll")
+                        break
+
                     try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        await page.wait_for_load_state("load", timeout=10000)
+                        title = (await page.title()).lower()
+                        body  = await page.evaluate(
+                            "() => document.body?.innerText?.toLowerCase() || ''"
+                        )
+                    except Exception as poll_err:
+                        err_msg = str(poll_err).lower()
+                        if "closed" in err_msg or "destroyed" in err_msg:
+                            logger.warning(f"Camoufox: browser closed during poll ({poll_err})")
+                            break
+                        # Normal navigation — page context was destroyed mid-load
+                        try:
+                            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                            await page.wait_for_load_state("load", timeout=10000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(1)
+                        continue
+
+                    is_cf = (
+                        "just a moment" in title or "cloudflare" in title
+                        or "security verification" in body
+                        or "verify you are human" in body
+                    )
+                    if not is_cf:
+                        break  # CF challenge cleared!
+
+                    if not iframe_clicked and (
+                        "verify you are human" in body or "security verification" in body
+                    ):
+                        iframe_clicked = True
+                        try:
+                            for frame in page.frames:
+                                if "challenges.cloudflare.com" in (frame.url or ""):
+                                    await frame.evaluate(
+                                        "() => { "
+                                        "  const cb = document.querySelector('input[type=checkbox]'); "
+                                        "  if (cb) cb.click(); "
+                                        "}"
+                                    )
+                                    logger.info("Camoufox: clicked Turnstile checkbox")
+                                    break
+                            cf_frame = page.frame_locator(
+                                "iframe[src*='challenges.cloudflare.com']"
+                            )
+                            checkbox = cf_frame.locator("input[type='checkbox']")
+                            if await checkbox.count() > 0:
+                                await checkbox.click(delay=120)
+                        except Exception as click_err:
+                            logger.debug(f"Camoufox iframe click: {click_err}")
+
+                    await asyncio.sleep(2)
+
+                # Wait for the post-redirect page to settle
+                if not _page_closed(page):
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=12000)
+                        await page.wait_for_load_state("load", timeout=12000)
+                    except Exception:
+                        await asyncio.sleep(2)
+                    await asyncio.sleep(1)
+
+                # ── Extract the clearance cookie + UA ─────────────────────────
+                cf_clearance = ""
+                ua           = UA
+                html         = None
+
+                if not _page_closed(page):
+                    try:
+                        cookies = await page.context.cookies()
+                        cf_clearance = next(
+                            (c["value"] for c in cookies if c["name"] == "cf_clearance"), ""
+                        )
+                    except Exception as e:
+                        logger.debug(f"Camoufox cookie extraction: {e}")
+                    try:
+                        ua = await page.evaluate("() => navigator.userAgent")
                     except Exception:
                         pass
-                    await asyncio.sleep(1)
-                    continue
-
-                is_cf = (
-                    "just a moment" in title or "cloudflare" in title
-                    or "security verification" in body
-                    or "verify you are human" in body
-                )
-                if not is_cf:
-                    break  # CF challenge cleared!
-
-                if not iframe_clicked and (
-                    "verify you are human" in body or "security verification" in body
-                ):
-                    iframe_clicked = True
                     try:
-                        for frame in page.frames:
-                            if "challenges.cloudflare.com" in (frame.url or ""):
-                                await frame.evaluate(
-                                    "() => { "
-                                    "  const cb = document.querySelector('input[type=checkbox]'); "
-                                    "  if (cb) cb.click(); "
-                                    "}"
-                                )
-                                logger.info("Camoufox: clicked Turnstile checkbox")
-                                break
-                        cf_frame = page.frame_locator(
-                            "iframe[src*='challenges.cloudflare.com']"
-                        )
-                        checkbox = cf_frame.locator("input[type='checkbox']")
-                        if await checkbox.count() > 0:
-                            await checkbox.click(delay=120)
-                    except Exception as click_err:
-                        logger.debug(f"Camoufox iframe click: {click_err}")
+                        html = await page.content()
+                    except Exception:
+                        pass
 
-                await asyncio.sleep(2)
+                if cf_clearance:
+                    logger.info(f"Camoufox: obtained cf_clearance for {url}")
+                else:
+                    logger.warning(
+                        f"Camoufox: no cf_clearance obtained for {url} (may still work)"
+                    )
 
-            # Wait for the post-redirect page to fully load
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=12000)
-                await page.wait_for_load_state("load", timeout=12000)
-            except Exception:
-                await asyncio.sleep(2)
+                return cf_clearance, ua, html
 
-            await asyncio.sleep(1)
+            finally:
+                # Close page to free memory (browser ctx manager closes the rest)
+                try:
+                    if not _page_closed(page):
+                        await page.close()
+                except Exception:
+                    pass
 
-            # ── Extract the clearance cookie + UA ─────────────────────────────
-            cookies = await ctx.cookies()
-            cf_clearance = next(
-                (c["value"] for c in cookies if c["name"] == "cf_clearance"), ""
-            )
-            try:
-                ua = await page.evaluate("() => navigator.userAgent")
-            except Exception:
-                ua = UA
-            try:
-                html = await page.content()
-            except Exception:
-                html = None
-
-            if cf_clearance:
-                logger.info(f"Camoufox: obtained cf_clearance for {url}")
-            else:
-                logger.warning(f"Camoufox: no cf_clearance obtained for {url} (may still work)")
-
-            return cf_clearance, ua, html
-        finally:
-            # ── Immediately close page & context to free memory ───────────────
-            try:
-                await page.close()
-            except Exception:
-                pass
-            try:
-                await ctx.close()
-            except Exception:
-                pass
-
-
+    except Exception as outer_err:
+        logger.error(f"Camoufox outer error for {url}: {outer_err}")
+        return "", "", None
 
 
 def _sync_camoufox_bypass(url: str) -> Tuple[str, str, Optional[str]]:
@@ -275,42 +297,65 @@ def _sync_camoufox_post(base_url: str, post_url: str, data: dict) -> Optional[st
         except ImportError:
             return None
 
-        async with AsyncCamoufox(headless=True) as browser:
-            page = await browser.new_page()
+        def _closed(page) -> bool:
             try:
-                # Load the homepage first so CF cookies are set
-                await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
+                return page.is_closed()
+            except Exception:
+                return True
 
-                # Wait for CF challenge to clear
-                for _ in range(15):
-                    title = await page.title()
-                    if "just a moment" not in title.lower() and "cloudflare" not in title.lower():
-                        break
+        try:
+            async with AsyncCamoufox(headless=True) as browser:
+                page = await browser.new_page()
+                try:
+                    await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
+
+                    # Wait for CF challenge to clear
+                    for _ in range(15):
+                        if _closed(page):
+                            break
+                        try:
+                            title = await page.title()
+                        except Exception:
+                            await asyncio.sleep(1)
+                            continue
+                        if "just a moment" not in title.lower() and "cloudflare" not in title.lower():
+                            break
+                        try:
+                            cf_frame = page.frame_locator("iframe[src*='challenges.cloudflare.com']")
+                            checkbox = cf_frame.locator("input[type='checkbox']")
+                            if await checkbox.count() > 0:
+                                await checkbox.click(delay=120)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(2)
+
+                    if _closed(page):
+                        return None
+
+                    # Build FormData and POST from inside the browser
+                    form_entries = ", ".join(
+                        f"fd.append({k!r}, {v!r})" for k, v in data.items()
+                    )
+                    js = f"""async () => {{
+                        const fd = new FormData();
+                        {form_entries};
+                        const res = await fetch({post_url!r}, {{method: 'POST', body: fd}});
+                        return await res.text();
+                    }}"""
+                    result = await page.evaluate(js)
+                    return result
+                finally:
                     try:
-                        cf_frame = page.frame_locator("iframe[src*='challenges.cloudflare.com']")
-                        checkbox = cf_frame.locator("input[type='checkbox']")
-                        if await checkbox.count() > 0:
-                            await checkbox.click(delay=120)
+                        if not _closed(page):
+                            await page.close()
                     except Exception:
                         pass
-                    await asyncio.sleep(2)
-
-                # Build FormData and POST from inside the browser
-                form_entries = ", ".join(
-                    f"fd.append({k!r}, {v!r})" for k, v in data.items()
-                )
-                js = f"""async () => {{
-                    const fd = new FormData();
-                    {form_entries};
-                    const res = await fetch({post_url!r}, {{method: 'POST', body: fd}});
-                    return await res.text();
-                }}"""
-                result = await page.evaluate(js)
-                return result
-            finally:
-                await page.close()
+        except Exception as e:
+            logger.error(f"_sync_camoufox_post error: {e}")
+            return None
 
     return asyncio.run(_do_post())
+
 
 
 async def _get_clearance(base_url: str) -> Tuple[str, str]:
