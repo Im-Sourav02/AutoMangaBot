@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Firefox / Camoufox
     libgtk-3-0 libdbus-glib-1-2 libxt6 libpci3 libxt6 \
     # Fonts + misc
-    xvfb fonts-liberation ca-certificates \
+    xvfb xauth fonts-liberation ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # ── 2. Python dependencies ───────────────────────────────────────────────────────
